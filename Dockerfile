@@ -2,7 +2,7 @@
 # Multi-stage build: JDK to build the jar, JRE-only runtime as a non-root user.
 # The frontend (node) stage is added in milestone 6, when frontend/ exists (see docs/DECISIONS.md).
 
-FROM eclipse-temurin:21-jdk AS build
+FROM eclipse-temurin:25-jdk AS build
 WORKDIR /src
 # Copy build scripts first so dependency resolution is cached separately from sources.
 COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties ./
@@ -12,7 +12,7 @@ RUN chmod +x gradlew && ./gradlew :backend:dependencies --no-daemon -q > /dev/nu
 COPY backend/src backend/src
 RUN ./gradlew :backend:bootJar -x test --no-daemon
 
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 RUN useradd --system --uid 10001 tracker
 COPY --from=build /src/backend/build/libs/llm-cost-tracker.jar /app/app.jar
 USER tracker
