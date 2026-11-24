@@ -1,0 +1,17 @@
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+.idea/
+.vscode/
+*.iml
+# VS Code Java (Eclipse JDT) output and metadata
+bin/
+.classpath
+.project
+.settings/
+.factorypath
+# Source spec document; SPEC.md is the tracked copy
+*.docx
+node_modules/
+frontend/dist/
+.env
