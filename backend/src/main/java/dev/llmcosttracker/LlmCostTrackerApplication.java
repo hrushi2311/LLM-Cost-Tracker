@@ -1,12 +1,16 @@
 package dev.llmcosttracker;
 
+import dev.llmcosttracker.auth.CreateProjectCommand;
 import java.util.TimeZone;
 import org.springframework.boot.SpringApplication;
+import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
 @ConfigurationPropertiesScan
+@EnableScheduling
 public class LlmCostTrackerApplication {
 
     public static void main(String[] args) {
@@ -14,6 +18,12 @@ public class LlmCostTrackerApplication {
         // zone that Postgres rejects (e.g. the legacy alias "Asia/Calcutta"). Budget periods use
         // TRACKER_TIMEZONE explicitly, never the JVM default.
         TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
-        SpringApplication.run(LlmCostTrackerApplication.class, args);
+        SpringApplication app = new SpringApplication(LlmCostTrackerApplication.class);
+        if (CreateProjectCommand.isRequested(args)) {
+            // One-shot CLI: create a project, print its key, exit. No web server.
+            app.setWebApplicationType(WebApplicationType.NONE);
+            System.exit(SpringApplication.exit(app.run(args)));
+        }
+        app.run(args);
     }
 }

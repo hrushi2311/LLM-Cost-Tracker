@@ -43,6 +43,9 @@ class AdminPasswordValidationTest {
 
     @Test
     void toStringNeverRevealsPassword() {
-        assertThat(new TrackerProperties("super-secret-password").toString()).doesNotContain("super-secret");
+        runner.withPropertyValues("tracker.admin-password=super-secret-password")
+                .run(ctx -> assertThat(ctx.getBean(TrackerProperties.class).toString())
+                        .doesNotContain("super-secret")
+                        .contains("adminPassword=***"));
     }
 }

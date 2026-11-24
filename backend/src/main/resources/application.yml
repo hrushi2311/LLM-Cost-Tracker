@@ -7,6 +7,12 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://db:5432/llmtracker}
     username: ${SPRING_DATASOURCE_USERNAME:tracker}
     # password has no default: SPRING_DATASOURCE_PASSWORD is required
+    hikari:
+      # Fail fast when Postgres is down; the batch writer drops and counts the batch instead of stalling.
+      connection-timeout: 5000
+  codec:
+    # Never log request/response details (headers, bodies), even at DEBUG.
+    log-request-details: false
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -37,3 +43,5 @@ management:
 tracker:
   # Bound from TRACKER_ADMIN_PASSWORD; required, min 12 characters.
   admin-password: ${TRACKER_ADMIN_PASSWORD:}
+  # Everything else binds straight from TRACKER_* variables with the defaults in TrackerProperties, e.g.
+  # TRACKER_REQUIRE_PROJECT_KEY, TRACKER_OPENAI_BASE_URL, TRACKER_UPSTREAM_TIMEOUT, TRACKER_QUEUE_CAPACITY.

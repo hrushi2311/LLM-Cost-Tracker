@@ -61,6 +61,19 @@ jobs:
           echo "tables: $tables"
           [ "$tables" = "7" ]
 
+      - name: Create a project with the CLI and use its key
+        run: |
+          out=$(docker compose run --rm -T app --create-project=ci-smoke)
+          key=$(echo "$out" | grep -E '^trk_[0-9A-Za-z]+$')
+          [ -n "$key" ] || { echo "$out"; exit 1; }
+          echo "created project; key ends ...${key: -4}"
+          stored=$(docker compose exec -T db psql -U tracker -d llmtracker -tAc \
+            "SELECT key_last4 FROM project WHERE name = 'ci-smoke'")
+          [ "$stored" = "${key: -4}" ]
+          # Missing key is rejected before anything is forwarded.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/proxy/openai/chat/completions)
+          echo "no key -> $code"; [ "$code" = "401" ]
+
       - name: Tear down
         if: always()
         run: docker compose down -v
