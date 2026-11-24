@@ -34,16 +34,18 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     needs: test
+    env:
+      # Throwaway values for the CI stack only.
+      DB_PASSWORD: ci-db-password
+      TRACKER_ADMIN_PASSWORD: ci-admin-password
     steps:
       - uses: actions/checkout@v4
 
+      # Build through compose so the image name always matches docker-compose.yml.
       - name: Build image
-        run: docker build -t llm-cost-tracker:ci .
+        run: docker compose build app
 
       - name: docker compose up and wait for healthy app
-        env:
-          DB_PASSWORD: ci-db-password
-          TRACKER_ADMIN_PASSWORD: ci-admin-password
         run: |
           docker compose up -d --no-build
           for i in $(seq 1 60); do
@@ -61,7 +63,4 @@ jobs:
 
       - name: Tear down
         if: always()
-        env:
-          DB_PASSWORD: ci-db-password
-          TRACKER_ADMIN_PASSWORD: ci-admin-password
         run: docker compose down -v
