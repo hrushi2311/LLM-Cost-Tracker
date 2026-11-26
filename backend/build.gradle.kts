@@ -33,7 +33,7 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:postgresql")
     // MockWebServer plays OpenAI/Anthropic; the official SDK proves base-URL-only compatibility (SPEC.md, Testing).
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0") // same OkHttp line as openai-java
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.5.1") // same OkHttp line as openai-java
     testImplementation("com.openai:openai-java:4.112.0")
     testImplementation("com.anthropic:anthropic-java:3.14.0")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
