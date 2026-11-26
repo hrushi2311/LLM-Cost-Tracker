@@ -5,7 +5,12 @@ import org.springframework.http.HttpMethod;
 
 /** The endpoints whose usage is recorded. Every other path is forwarded but not recorded. */
 public enum Endpoint {
-    CHAT_COMPLETIONS("chat.completions");
+    /** OpenAI (and OpenAI-compatible) Chat Completions: {@code POST {base}/chat/completions}. */
+    CHAT_COMPLETIONS("chat.completions"),
+    /** OpenAI (and OpenAI-compatible) Responses: {@code POST {base}/responses}. */
+    RESPONSES("responses"),
+    /** Anthropic Messages: {@code POST {base}/v1/messages}. */
+    MESSAGES("messages");
 
     private final String wireName;
 
@@ -26,9 +31,13 @@ public enum Endpoint {
             return Optional.empty();
         }
         String p = path.endsWith("/") ? path.substring(0, path.length() - 1) : path;
-        if (dialect == Dialect.OPENAI && p.equals("/chat/completions")) {
-            return Optional.of(CHAT_COMPLETIONS);
-        }
-        return Optional.empty();
+        return switch (dialect) {
+            case OPENAI -> switch (p) {
+                case "/chat/completions" -> Optional.of(CHAT_COMPLETIONS);
+                case "/responses" -> Optional.of(RESPONSES);
+                default -> Optional.empty();
+            };
+            case ANTHROPIC -> p.equals("/v1/messages") ? Optional.of(MESSAGES) : Optional.empty();
+        };
     }
 }

@@ -19,6 +19,7 @@ import org.springframework.validation.annotation.Validated;
  * @param requireProjectKey reject proxy calls without a valid {@code X-Tracker-Key}
  * @param openaiBaseUrl     OpenAI upstream base URL
  * @param anthropicBaseUrl  Anthropic upstream base URL
+ * @param customProviders   OpenAI-compatible providers as {@code name=url} pairs, comma separated (may be null)
  * @param connectTimeout    upstream connect timeout
  * @param upstreamTimeout   upstream response timeout
  * @param maxRequestBody    largest request body the proxy accepts
@@ -33,6 +34,7 @@ public record TrackerProperties(
         @DefaultValue("true") boolean requireProjectKey,
         @NotNull @DefaultValue("https://api.openai.com/v1") URI openaiBaseUrl,
         @NotNull @DefaultValue("https://api.anthropic.com") URI anthropicBaseUrl,
+        String customProviders,
         @NotNull @DefaultValue("10s") Duration connectTimeout,
         @NotNull @DefaultValue("10m") Duration upstreamTimeout,
         @NotNull @DefaultValue("20MB") DataSize maxRequestBody,
@@ -42,6 +44,7 @@ public record TrackerProperties(
     public String toString() {
         return "TrackerProperties[adminPassword=***, requireProjectKey=" + requireProjectKey
                 + ", openaiBaseUrl=" + openaiBaseUrl + ", anthropicBaseUrl=" + anthropicBaseUrl
+                + ", customProviders=" + customProviders
                 + ", connectTimeout=" + connectTimeout + ", upstreamTimeout=" + upstreamTimeout
                 + ", maxRequestBody=" + maxRequestBody + ", queueCapacity=" + queueCapacity + "]";
     }

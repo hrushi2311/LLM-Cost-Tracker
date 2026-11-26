@@ -2,7 +2,7 @@
 
 A lightweight, self-hosted LLM cost tracker that discovers your agents automatically. One container plus Postgres, any language, no SDK.
 
-> **Status: milestone 2 of 9.** The proxy forwards OpenAI and Anthropic traffic, and records tokens and cost for non-streaming OpenAI Chat Completions. Anthropic Messages, the Responses API, agents, streaming and the dashboard come in later milestones. See [SPEC.md](SPEC.md) for the full design and build order.
+> **Status: milestone 3 of 9.** The proxy forwards OpenAI, Anthropic and custom OpenAI-compatible traffic, and records tokens and cost for non-streaming OpenAI Chat Completions, OpenAI Responses and Anthropic Messages. Agents, streaming and the dashboard come in later milestones. See [SPEC.md](SPEC.md) for the full design and build order.
 
 ## Quick start
 
@@ -52,10 +52,44 @@ const client = new OpenAI({ baseURL: "http://localhost:8080/proxy/openai",
                             defaultHeaders: { "X-Tracker-Key": "trk_..." } });
 ```
 
+Anthropic works the same way; `anthropic-version`, `anthropic-beta` and every other header pass through unchanged.
+
+```python
+# Python (anthropic)
+client = Anthropic(base_url="http://localhost:8080/proxy/anthropic",
+                   default_headers={"X-Tracker-Key": "trk_..."})
+```
+
+```java
+// Java (anthropic-java)
+AnthropicClient client = AnthropicOkHttpClient.builder()
+        .fromEnv()
+        .baseUrl("http://localhost:8080/proxy/anthropic")
+        .putHeader("X-Tracker-Key", "trk_...")
+        .build();
+```
+
+```js
+// Node (@anthropic-ai/sdk)
+const client = new Anthropic({ baseURL: "http://localhost:8080/proxy/anthropic",
+                               defaultHeaders: { "X-Tracker-Key": "trk_..." } });
+```
+
 | Provider | Proxy base URL | Forwards to |
 |---|---|---|
 | `openai` | `http://host:8080/proxy/openai` | `TRACKER_OPENAI_BASE_URL` (default `https://api.openai.com/v1`) |
 | `anthropic` | `http://host:8080/proxy/anthropic` | `TRACKER_ANTHROPIC_BASE_URL` (default `https://api.anthropic.com`) |
+| any name you configure | `http://host:8080/proxy/{name}` | the URL given in `TRACKER_CUSTOM_PROVIDERS` |
+
+### Custom OpenAI-compatible providers
+
+Any service that speaks the OpenAI API (Groq, Together, Ollama, vLLM, LM Studio and so on) can be added by name:
+
+```sh
+TRACKER_CUSTOM_PROVIDERS=groq=https://api.groq.com/openai/v1,local=http://ollama:11434/v1
+```
+
+Point the OpenAI SDK at `http://host:8080/proxy/groq`. Calls are parsed like OpenAI's and stored with `provider = groq`, so they are priced from `groq` rows in the price table. The proxy only ever calls the configured URL. Names must be lowercase (`a-z`, `0-9`, `-`), and a malformed entry stops the app at startup.
 
 An optional `/agent/{name}` segment (`/proxy/openai/agent/planner/...`) is stripped before forwarding; agent attribution arrives in milestone 4.
 
@@ -63,13 +97,19 @@ An optional `/agent/{name}` segment (`/proxy/openai/agent/planner/...`) is strip
 
 | Endpoint | Recorded from |
 |---|---|
-| OpenAI Chat Completions (`POST …/chat/completions`), non-streaming | milestone 2 |
-| OpenAI Responses, Anthropic Messages | milestone 3 |
+| OpenAI Chat Completions (`POST …/chat/completions`), non-streaming | yes |
+| OpenAI Responses (`POST …/responses`), non-streaming | yes |
+| Anthropic Messages (`POST /v1/messages`), non-streaming | yes |
+| The same paths on custom OpenAI-compatible providers | yes |
 | Streaming responses | milestone 5 (forwarded unchanged until then) |
 
-All other paths are forwarded unchanged and not recorded. For each recorded call the tracker stores the model, uncached input, output, cache-read and reasoning tokens, cost, status code and latency, and nothing else.
+All other paths are forwarded unchanged and not recorded. For each recorded call the tracker stores the model, uncached input, output, cache-read, cache-write and reasoning tokens, cost, status code and latency, and nothing else.
+
+Token counts are normalised so the same columns mean the same thing for every provider. OpenAI reports input including cached tokens, so the cached part is subtracted. Anthropic's `input_tokens` already excludes cache reads and writes, so it is stored as reported. Reasoning and thinking tokens are already counted in output; they are stored for display and never charged twice.
 
 Cost uses the `model_price` table: the row in effect on the call's date, matching the exact model name first, then the longest stored prefix (so `gpt-4o-2024-08-06` is priced as `gpt-4o`). A model with no price is stored with a null cost and can be priced later. The price table ships empty until milestone 8, so add rows yourself for now.
+
+**Known limitation:** Anthropic charges more to write a 1-hour cache entry (2× input) than a 5-minute one (1.25× input). v0.1 uses a single cache-write price per model, so 1-hour cache writes are under-costed. Batch, long-context and regional price tiers are not modelled either.
 
 Recording happens after the response has been sent and never delays or fails a call. If the in-memory queue is full or Postgres is down, events are dropped and counted in the `tracker.events.dropped` metric.
 
@@ -91,6 +131,7 @@ Everything is configured through environment variables; see [.env.example](.env.
 | `TRACKER_REQUIRE_PROJECT_KEY` | `true` | Reject proxy calls without a valid `X-Tracker-Key` (401). Never expose the proxy publicly with this off |
 | `TRACKER_OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI upstream |
 | `TRACKER_ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Anthropic upstream |
+| `TRACKER_CUSTOM_PROVIDERS` | empty | `name=url` pairs, comma separated, for OpenAI-compatible providers |
 | `TRACKER_CONNECT_TIMEOUT` | `10s` | Upstream connect timeout |
 | `TRACKER_UPSTREAM_TIMEOUT` | `10m` | Upstream response timeout |
 | `TRACKER_MAX_REQUEST_BODY` | `20MB` | Largest accepted request body (413 above it) |

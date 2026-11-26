@@ -7,7 +7,9 @@ import dev.llmcosttracker.config.TrackerProperties;
 import dev.llmcosttracker.ingest.UsageEvent;
 import dev.llmcosttracker.ingest.UsageEventQueue;
 import dev.llmcosttracker.provider.Endpoint;
+import dev.llmcosttracker.provider.AnthropicMessagesUsageParser;
 import dev.llmcosttracker.provider.OpenAiChatUsageParser;
+import dev.llmcosttracker.provider.OpenAiResponsesUsageParser;
 import dev.llmcosttracker.provider.Usage;
 import dev.llmcosttracker.proxy.ProviderRegistry.Provider;
 import io.netty.handler.timeout.ReadTimeoutException;
@@ -80,7 +82,7 @@ public class ProxyService {
         Optional<Provider> provider = providers.find(route.get().provider());
         if (provider.isEmpty()) {
             return ProxyErrors.write(response, HttpStatus.NOT_FOUND, "unknown_provider",
-                    "Unknown provider. Configured providers: openai, anthropic");
+                    "Unknown provider. Configured providers: " + String.join(", ", providers.keys()));
         }
         Optional<URI> target = route.get().upstreamUri(provider.get().baseUrl(), request.getURI().getRawQuery());
         if (target.isEmpty()) {
@@ -250,8 +252,11 @@ public class ProxyService {
                 return Usage.NONE;
             }
             try {
+                JsonNode root = JSON.readTree(copy.bytes());
                 return switch (endpoint) {
-                    case CHAT_COMPLETIONS -> OpenAiChatUsageParser.parse(JSON.readTree(copy.bytes()));
+                    case CHAT_COMPLETIONS -> OpenAiChatUsageParser.parse(root);
+                    case RESPONSES -> OpenAiResponsesUsageParser.parse(root);
+                    case MESSAGES -> AnthropicMessagesUsageParser.parse(root);
                 };
             } catch (Exception e) {
                 // Body was not JSON (e.g. an HTML error page). Record the status with zero usage.

@@ -7,42 +7,21 @@ import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.models.ChatModel;
 import com.openai.models.chat.completions.ChatCompletion;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
-import dev.llmcosttracker.Await;
-import dev.llmcosttracker.PostgresIntegrationTest;
-import dev.llmcosttracker.auth.ProjectKeyService;
-import dev.llmcosttracker.auth.ProjectRepository;
-import java.io.IOException;
-import java.io.InputStream;
 import java.math.BigDecimal;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
-import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 
 /**
  * Milestone 2 acceptance: the official OpenAI Java SDK, pointed at the proxy (which points at a MockWebServer
@@ -50,110 +29,21 @@ import org.springframework.test.context.DynamicPropertySource;
  * never forwarded, stored or logged.
  */
 @ExtendWith(OutputCaptureExtension.class)
-@SpringBootTest(
-        webEnvironment = WebEnvironment.RANDOM_PORT,
-        properties = {
-            "tracker.admin-password=test-admin-password",
-            // Turn up the loggers most likely to print headers, so the "never logged" test is meaningful.
-            "logging.level.dev.llmcosttracker=DEBUG",
-            "logging.level.org.springframework.web=DEBUG",
-            "logging.level.reactor.netty.http=DEBUG"
-        })
-class OpenAiProxyIntegrationTest extends PostgresIntegrationTest {
+class OpenAiProxyIntegrationTest extends ProxyIntegrationTestBase {
 
-    static final MockWebServer UPSTREAM = new MockWebServer();
     static final String PROVIDER_KEY = "sk-test-NOT-A-REAL-KEY-7f3a9c2e";
 
-    static {
-        try {
-            UPSTREAM.start();
-        } catch (IOException e) {
-            throw new IllegalStateException(e);
-        }
-    }
-
-    @DynamicPropertySource
-    static void upstream(DynamicPropertyRegistry registry) {
-        registry.add("tracker.openai-base-url", () -> UPSTREAM.url("/v1").toString());
-    }
-
-    @AfterAll
-    static void stopUpstream() throws IOException {
-        UPSTREAM.shutdown();
-    }
-
-    @LocalServerPort
-    int port;
-
-    @Autowired
-    ProjectRepository projects;
-
-    @Autowired
-    ProjectKeyService projectKeys;
-
-    @Autowired
-    JdbcTemplate jdbc;
-
-    final HttpClient http = HttpClient.newHttpClient();
-    String projectKey;
-    UUID projectId;
-
-    @BeforeEach
-    void setUp() throws InterruptedException {
-        new ResourceDatabasePopulator(new ClassPathResource("fixtures/test-prices.sql")).execute(jdbc.getDataSource());
-        ProjectRepository.CreatedProject p = projects.create("proxy-test-" + UUID.randomUUID());
-        projectKey = p.key();
-        projectId = p.id();
-        // Discard requests left over from a previous test, if any.
-        while (UPSTREAM.takeRequest(10, TimeUnit.MILLISECONDS) != null) {
-            // drain
-        }
-    }
-
-    static byte[] fixture(String name) throws IOException {
-        try (InputStream in = OpenAiProxyIntegrationTest.class.getResourceAsStream("/fixtures/openai/" + name)) {
-            return in.readAllBytes();
-        }
-    }
-
-    static MockResponse jsonResponse(int status, byte[] body) {
-        return new MockResponse()
-                .setResponseCode(status)
-                .setHeader("Content-Type", "application/json")
-                .setHeader("x-request-id", "req_mock_0001")
-                .setHeader("openai-processing-ms", "321")
-                .setBody(new okio.Buffer().write(body));
-    }
-
-    String proxyBase() {
-        return "http://localhost:" + port + "/proxy/openai";
-    }
-
-    List<Map<String, Object>> events() {
-        return jdbc.queryForList("SELECT * FROM usage_event WHERE project_id = ? ORDER BY id", projectId);
-    }
-
-    Map<String, Object> awaitSingleEvent() {
-        return Await.until(this::events, rows -> !rows.isEmpty(), Duration.ofSeconds(15)).get(0);
-    }
-
-    HttpResponse<byte[]> rawPost(String path, String body, String... headers) throws Exception {
-        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(proxyBase() + path))
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .header("Content-Type", "application/json");
-        for (int i = 0; i < headers.length; i += 2) {
-            b.header(headers[i], headers[i + 1]);
-        }
-        return http.send(b.build(), HttpResponse.BodyHandlers.ofByteArray());
+    HttpResponse<byte[]> postOpenAi(String path, String body, String... headers) throws Exception {
+        return rawPost("openai", path, body, headers);
     }
 
     @Test
     void officialSdkWorksThroughTheProxyAndAPricedRowIsWritten() throws Exception {
-        UPSTREAM.enqueue(jsonResponse(200, fixture("chat-completion.json")));
+        OPENAI.enqueue(jsonResponse(200, fixture("openai/chat-completion.json")).setHeader("openai-processing-ms", "321"));
 
         OpenAIClient client = OpenAIOkHttpClient.builder()
                 .apiKey(PROVIDER_KEY)
-                .baseUrl(proxyBase())
+                .baseUrl(proxyBase("openai"))
                 .putHeader("X-Tracker-Key", projectKey)
                 .maxRetries(0)
                 .build();
@@ -166,7 +56,7 @@ class OpenAiProxyIntegrationTest extends PostgresIntegrationTest {
         assertThat(completion.choices().get(0).message().content()).contains("Hello! How can I help you today?");
         assertThat(completion.usage().orElseThrow().promptTokens()).isEqualTo(1117);
 
-        RecordedRequest upstream = UPSTREAM.takeRequest(5, TimeUnit.SECONDS);
+        RecordedRequest upstream = OPENAI.takeRequest(5, TimeUnit.SECONDS);
         assertThat(upstream.getPath()).isEqualTo("/v1/chat/completions");
         assertThat(upstream.getMethod()).isEqualTo("POST");
         assertThat(upstream.getHeader("Authorization")).isEqualTo("Bearer " + PROVIDER_KEY);
@@ -191,10 +81,10 @@ class OpenAiProxyIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     void responseBytesAndHeadersAreExactlyWhatUpstreamSent() throws Exception {
-        byte[] body = fixture("chat-completion.json");
-        UPSTREAM.enqueue(jsonResponse(200, body));
+        byte[] body = fixture("openai/chat-completion.json");
+        OPENAI.enqueue(jsonResponse(200, body).setHeader("openai-processing-ms", "321"));
 
-        HttpResponse<byte[]> response = rawPost("/chat/completions", "{\"model\":\"gpt-4o\",\"messages\":[]}",
+        HttpResponse<byte[]> response = postOpenAi("/chat/completions", "{\"model\":\"gpt-4o\",\"messages\":[]}",
                 "Authorization", "Bearer " + PROVIDER_KEY, "X-Tracker-Key", projectKey);
 
         assertThat(response.statusCode()).isEqualTo(200);
@@ -207,21 +97,21 @@ class OpenAiProxyIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     void requestBodyIsForwardedUnchanged() throws Exception {
-        UPSTREAM.enqueue(jsonResponse(200, fixture("chat-completion.json")));
+        OPENAI.enqueue(jsonResponse(200, fixture("openai/chat-completion.json")));
         String requestBody = "{ \"model\" : \"gpt-4o\",\n  \"messages\": [{\"role\":\"user\",\"content\":\"hi\"}] }";
 
-        rawPost("/chat/completions", requestBody, "X-Tracker-Key", projectKey);
+        postOpenAi("/chat/completions", requestBody, "X-Tracker-Key", projectKey);
 
-        RecordedRequest upstream = UPSTREAM.takeRequest(5, TimeUnit.SECONDS);
+        RecordedRequest upstream = OPENAI.takeRequest(5, TimeUnit.SECONDS);
         assertThat(upstream.getBody().readString(StandardCharsets.UTF_8)).isEqualTo(requestBody);
         awaitSingleEvent();
     }
 
     @Test
     void reasoningTokensAreStoredButCostedOnlyOnceInsideOutput() throws Exception {
-        UPSTREAM.enqueue(jsonResponse(200, fixture("chat-completion-reasoning.json")));
+        OPENAI.enqueue(jsonResponse(200, fixture("openai/chat-completion-reasoning.json")));
 
-        rawPost("/chat/completions", "{\"model\":\"o4-mini\"}", "X-Tracker-Key", projectKey);
+        postOpenAi("/chat/completions", "{\"model\":\"o4-mini\"}", "X-Tracker-Key", projectKey);
 
         Map<String, Object> row = awaitSingleEvent();
         assertThat(row).containsEntry("input_tokens", 512)
@@ -233,11 +123,11 @@ class OpenAiProxyIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     void unpricedModelIsStoredWithNullCost() throws Exception {
-        UPSTREAM.enqueue(jsonResponse(200,
+        OPENAI.enqueue(jsonResponse(200,
                 "{\"model\":\"brand-new-model\",\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7}}"
                         .getBytes(StandardCharsets.UTF_8)));
 
-        rawPost("/chat/completions", "{\"model\":\"brand-new-model\"}", "X-Tracker-Key", projectKey);
+        postOpenAi("/chat/completions", "{\"model\":\"brand-new-model\"}", "X-Tracker-Key", projectKey);
 
         Map<String, Object> row = awaitSingleEvent();
         assertThat(row).containsEntry("model", "brand-new-model").containsEntry("input_tokens", 5);
@@ -246,10 +136,10 @@ class OpenAiProxyIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     void secretsAndTrackerHeadersAreNeverForwardedStoredOrLogged(CapturedOutput output) throws Exception {
-        UPSTREAM.enqueue(jsonResponse(200, fixture("chat-completion.json")));
+        OPENAI.enqueue(jsonResponse(200, fixture("openai/chat-completion.json")));
         String secretRunId = "run-SECRET-4c1d";
 
-        rawPost("/chat/completions", "{\"model\":\"gpt-4o\"}",
+        postOpenAi("/chat/completions", "{\"model\":\"gpt-4o\"}",
                 "Authorization", "Bearer " + PROVIDER_KEY,
                 "x-api-key", PROVIDER_KEY,
                 "X-Tracker-Key", projectKey,
@@ -257,7 +147,7 @@ class OpenAiProxyIntegrationTest extends PostgresIntegrationTest {
                 "X-Tracker-Tag-Team", "search");
 
         // Forwarded: provider credentials untouched. Not forwarded: every X-Tracker-* header.
-        RecordedRequest upstream = UPSTREAM.takeRequest(5, TimeUnit.SECONDS);
+        RecordedRequest upstream = OPENAI.takeRequest(5, TimeUnit.SECONDS);
         assertThat(upstream.getHeader("Authorization")).isEqualTo("Bearer " + PROVIDER_KEY);
         assertThat(upstream.getHeader("x-api-key")).isEqualTo(PROVIDER_KEY);
         assertThat(upstream.getHeaders().names())
@@ -282,16 +172,16 @@ class OpenAiProxyIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     void agentPathSegmentIsStrippedBeforeForwarding() throws Exception {
-        UPSTREAM.enqueue(jsonResponse(200, fixture("chat-completion.json")));
+        OPENAI.enqueue(jsonResponse(200, fixture("openai/chat-completion.json")));
 
         HttpRequest request = HttpRequest.newBuilder(
-                        URI.create(proxyBase() + "/agent/planner/chat/completions"))
+                        URI.create(proxyBase("openai") + "/agent/planner/chat/completions"))
                 .POST(HttpRequest.BodyPublishers.ofString("{\"model\":\"gpt-4o\"}"))
                 .header("X-Tracker-Key", projectKey)
                 .build();
         assertThat(http.send(request, HttpResponse.BodyHandlers.discarding()).statusCode()).isEqualTo(200);
 
-        assertThat(UPSTREAM.takeRequest(5, TimeUnit.SECONDS).getPath()).isEqualTo("/v1/chat/completions");
+        assertThat(OPENAI.takeRequest(5, TimeUnit.SECONDS).getPath()).isEqualTo("/v1/chat/completions");
         awaitSingleEvent();
     }
 
@@ -299,9 +189,9 @@ class OpenAiProxyIntegrationTest extends PostgresIntegrationTest {
     void upstreamErrorsArePassedThroughAndRecorded() throws Exception {
         byte[] error = "{\"error\":{\"message\":\"Rate limit reached\",\"type\":\"requests\",\"code\":\"rate_limit_exceeded\"}}"
                 .getBytes(StandardCharsets.UTF_8);
-        UPSTREAM.enqueue(jsonResponse(429, error).setHeader("retry-after", "7"));
+        OPENAI.enqueue(jsonResponse(429, error).setHeader("retry-after", "7"));
 
-        HttpResponse<byte[]> response = rawPost("/chat/completions", "{\"model\":\"gpt-4o\"}",
+        HttpResponse<byte[]> response = postOpenAi("/chat/completions", "{\"model\":\"gpt-4o\"}",
                 "X-Tracker-Key", projectKey);
 
         assertThat(response.statusCode()).isEqualTo(429);
@@ -316,10 +206,10 @@ class OpenAiProxyIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     void nonJsonUpstreamErrorIsRelayedAndRecordedWithZeroUsage() throws Exception {
-        UPSTREAM.enqueue(new MockResponse().setResponseCode(502)
+        OPENAI.enqueue(new MockResponse().setResponseCode(502)
                 .setHeader("Content-Type", "text/html").setBody("<html>bad gateway</html>"));
 
-        HttpResponse<byte[]> response = rawPost("/chat/completions", "{\"model\":\"gpt-4o\"}",
+        HttpResponse<byte[]> response = postOpenAi("/chat/completions", "{\"model\":\"gpt-4o\"}",
                 "X-Tracker-Key", projectKey);
 
         assertThat(response.statusCode()).isEqualTo(502);
@@ -329,16 +219,16 @@ class OpenAiProxyIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     void otherPathsAreForwardedButNotRecorded() throws Exception {
-        UPSTREAM.enqueue(jsonResponse(200, "{\"object\":\"list\",\"data\":[]}".getBytes(StandardCharsets.UTF_8)));
+        OPENAI.enqueue(jsonResponse(200, "{\"object\":\"list\",\"data\":[]}".getBytes(StandardCharsets.UTF_8)));
 
-        HttpRequest request = HttpRequest.newBuilder(URI.create(proxyBase() + "/models?limit=2"))
+        HttpRequest request = HttpRequest.newBuilder(URI.create(proxyBase("openai") + "/models?limit=2"))
                 .header("X-Tracker-Key", projectKey)
                 .GET().build();
         HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
 
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body()).isEqualTo("{\"object\":\"list\",\"data\":[]}");
-        RecordedRequest upstream = UPSTREAM.takeRequest(5, TimeUnit.SECONDS);
+        RecordedRequest upstream = OPENAI.takeRequest(5, TimeUnit.SECONDS);
         assertThat(upstream.getPath()).isEqualTo("/v1/models?limit=2");
         assertThat(upstream.getMethod()).isEqualTo("GET");
         Thread.sleep(1500); // longer than one batch interval
@@ -347,17 +237,17 @@ class OpenAiProxyIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     void missingOrUnknownProjectKeyIsRejectedBeforeForwarding() throws Exception {
-        int before = UPSTREAM.getRequestCount();
+        int before = OPENAI.getRequestCount();
 
-        HttpResponse<byte[]> missing = rawPost("/chat/completions", "{}");
-        HttpResponse<byte[]> unknown = rawPost("/chat/completions", "{}", "X-Tracker-Key", "trk_doesNotExist123");
+        HttpResponse<byte[]> missing = postOpenAi("/chat/completions", "{}");
+        HttpResponse<byte[]> unknown = postOpenAi("/chat/completions", "{}", "X-Tracker-Key", "trk_doesNotExist123");
 
         for (HttpResponse<byte[]> r : List.of(missing, unknown)) {
             assertThat(r.statusCode()).isEqualTo(401);
             assertThat(new String(r.body(), StandardCharsets.UTF_8))
                     .isEqualTo("{\"error\":{\"code\":\"invalid_project_key\",\"message\":\"Missing or unknown X-Tracker-Key\"}}");
         }
-        assertThat(UPSTREAM.getRequestCount()).isEqualTo(before);
+        assertThat(OPENAI.getRequestCount()).isEqualTo(before);
     }
 
     @Test

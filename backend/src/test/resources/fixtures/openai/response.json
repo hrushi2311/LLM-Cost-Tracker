@@ -1,0 +1,66 @@
+{
+  "id": "resp_0f2a9c7e41b3d58a6c0e2f4b7d9a1c3e5",
+  "object": "response",
+  "created_at": 1764150000,
+  "status": "completed",
+  "completed_at": 1764150004,
+  "background": false,
+  "error": null,
+  "incomplete_details": null,
+  "instructions": null,
+  "max_output_tokens": null,
+  "model": "o4-mini-2025-04-16",
+  "output": [
+    {
+      "id": "rs_0f2a9c7e41b3d58a6c0e2f4b7d9a1c3e6",
+      "type": "reasoning",
+      "summary": []
+    },
+    {
+      "id": "msg_0f2a9c7e41b3d58a6c0e2f4b7d9a1c3e7",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Here is a short plan.",
+          "annotations": [],
+          "logprobs": []
+        }
+      ]
+    }
+  ],
+  "parallel_tool_calls": true,
+  "previous_response_id": null,
+  "reasoning": {
+    "effort": "medium",
+    "summary": null
+  },
+  "service_tier": "default",
+  "store": true,
+  "temperature": 1.0,
+  "text": {
+    "format": {
+      "type": "text"
+    }
+  },
+  "tool_choice": "auto",
+  "tools": [],
+  "top_p": 1.0,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": 1500,
+    "input_tokens_details": {
+      "cached_tokens": 1024,
+      "cache_write_tokens": 0
+    },
+    "output_tokens": 900,
+    "output_tokens_details": {
+      "reasoning_tokens": 640
+    },
+    "total_tokens": 2400
+  },
+  "user": null,
+  "metadata": {}
+}
