@@ -4,10 +4,18 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # SPEC.md pins Spring Boot 3; a move to 4.x is a deliberate decision, not a routine bump.
+      - dependency-name: org.springframework.boot
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # SPEC.md pins Java 21 for the build and runtime images.
+      - dependency-name: eclipse-temurin
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

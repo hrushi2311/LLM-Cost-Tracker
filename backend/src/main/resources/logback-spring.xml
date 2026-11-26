@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Spring Boot's default console logging, with every message passed through the credential redactor. -->
+<configuration>
+    <conversionRule conversionWord="m" converterClass="dev.llmcosttracker.config.RedactingMessageConverter"/>
+    <conversionRule conversionWord="msg" converterClass="dev.llmcosttracker.config.RedactingMessageConverter"/>
+    <conversionRule conversionWord="message" converterClass="dev.llmcosttracker.config.RedactingMessageConverter"/>
+
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

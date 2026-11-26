@@ -9,24 +9,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.reactive.server.WebTestClient;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 /** Milestone 1: the app boots against Postgres 16, Flyway creates the schema, health is public and UP. */
-@Testcontainers
 @AutoConfigureWebTestClient(timeout = "PT30S") // first request on a cold JVM can exceed the 5 s default on slow CI hosts
 @SpringBootTest(
         webEnvironment = WebEnvironment.RANDOM_PORT,
         properties = "tracker.admin-password=test-admin-password")
-class SkeletonIntegrationTest {
-
-    @Container
-    @ServiceConnection
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16");
+class SkeletonIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     JdbcTemplate jdbc;
