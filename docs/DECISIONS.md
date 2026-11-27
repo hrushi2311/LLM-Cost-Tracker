@@ -69,3 +69,22 @@ Choices made where SPEC.md was ambiguous or had to be adapted. Newest last.
 
   Tests run with the access log and web/Netty DEBUG logging on, and assert that the key is in no log line while the masked access log line is present.
 - **No REST/UI for agents yet;** `agent.display_name` is set only through `AgentService.rename` until milestone 6.
+
+## Milestone 5 – Streaming
+
+- **Streaming formats verified on 2026-11-27.**
+  - *Chat Completions:* developers.openai.com, chat streaming events and `stream_options`. `include_usage` streams "an additional chunk ... before the `data: [DONE]` message" whose `choices` "will always be an empty array"; all other chunks carry `"usage": null`.
+  - *Responses:* the reference page is several million characters long, with the streaming events section out of reach, so the wire names come from the official `openai-java` 4.112.0 SDK's generated event classes. They are `response.completed`, `response.failed` and `response.incomplete` (each with `type`, `sequence_number` and a `response` object carrying `usage`), and `error` (with `type`, `code`, `message`, `param`, `sequence_number`).
+  - *Anthropic:* the streaming guide says `message_delta` usage counts "are *cumulative*". So the last value wins, including any input or cache fields a delta repeats.
+- **Flushed per chunk.** `text/event-stream` responses are written with `writeAndFlushWith`, one flush per upstream chunk. A test throttles MockWebServer to 300 bytes per 300 ms and checks that the first `data:` line reaches the client in under 1.2 s, while the stream takes more than 2 s.
+- **Bounded memory: 64 KiB head + 64 KiB tail per SSE line.** The tracker never holds more than the current line's first and last 64 KiB. Lines are usually tiny. The exception is the Responses `response.completed` event, which repeats the full output: its `type` and `model` are read from the head and `usage` from the tail. Unescaped `"usage":` can only be a real key, because quotes inside JSON strings are escaped. Tests feed a 20 MB `response.completed` line and a 16 MB, 200,000-chunk stream, and assert that memory stays within the window.
+- **`stream_options.include_usage` injection is textual.** The field is inserted before the closing brace of the top-level object, so every other byte of the request is unchanged. It applies only to streamed Chat Completions on the OpenAI dialect (OpenAI and custom providers) that do not set `stream_options` at all. If the client set `stream_options`, with or without `include_usage`, the request is untouched and a stream without usage is recorded `incomplete` with zero tokens, as requested. A custom provider that rejects `stream_options` can be handled by turning the injection off globally (`TRACKER_OPENAI_INJECT_STREAM_USAGE=false`); a per-provider switch can come later.
+- **What counts as a normal end.**
+  - Chat: `[DONE]` *and* a usage chunk.
+  - Responses: `response.completed`.
+  - Anthropic: `message_stop`.
+
+  Anything else (client disconnect, upstream drop, an error event, `response.failed`/`response.incomplete`, a missing usage chunk) records the event with `incomplete = true` and the usage seen so far. Mid-stream errors keep the HTTP status the stream started with (usually 200), since there is no separate error column.
+- **Client disconnect cancels the upstream request.** The client write is cancelled, which cancels the upstream body subscription, and Reactor Netty closes that connection, so the provider stops generating. A test uses a JDK `HttpServer` streaming one chunk every 100 ms for 30 s. It resets the client socket after the third chunk and asserts that the upstream's next writes fail within seconds. A client that disconnects *before* the upstream responds cancels the upstream call too, but nothing is recorded, since there is no status or usage yet.
+- **Upstream connection drops mid-stream are passed on, not hidden.** The response is already committed, so the proxy closes the client connection and the client sees a broken stream, exactly as it would talking to the provider directly. The event is recorded as incomplete.
+- **A streamed request that gets a non-stream response** (e.g. a 400 JSON error) is recorded through the non-streaming path with `streamed = false`.

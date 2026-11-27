@@ -11,7 +11,9 @@ import dev.llmcosttracker.ingest.UsageEventQueue;
 import dev.llmcosttracker.provider.Endpoint;
 import dev.llmcosttracker.provider.AnthropicMessagesUsageParser;
 import dev.llmcosttracker.provider.OpenAiChatUsageParser;
+import dev.llmcosttracker.provider.Dialect;
 import dev.llmcosttracker.provider.OpenAiResponsesUsageParser;
+import dev.llmcosttracker.provider.StreamUsageTracker;
 import dev.llmcosttracker.provider.Usage;
 import dev.llmcosttracker.proxy.ProviderRegistry.Provider;
 import io.netty.handler.timeout.ReadTimeoutException;
@@ -143,35 +145,42 @@ public class ProxyService {
         ServerHttpResponse response = exchange.getResponse();
 
         Recording recording = null;
+        byte[] outgoing = body;
         if (projectId != null) {
             Optional<Endpoint> endpoint = Endpoint.classify(provider.dialect(), request.getMethod(), route.upstreamPath());
             if (endpoint.isPresent()) {
+                Endpoint ep = endpoint.get();
                 RequestInfo info = RequestInfo.of(body);
-                // Streaming responses are relayed but recorded from milestone 5.
-                if (!info.stream()) {
-                    Endpoint ep = endpoint.get();
-                    // The fingerprint is computed only if no header or path agent matched; the prompt text never
-                    // leaves Fingerprinter, and only the hash is kept.
-                    RequestAttribution attribution = RequestAttribution.resolve(request.getHeaders(),
-                            route.agentName(),
-                            () -> fingerprinter == null ? null : fingerprinter.fingerprint(ep, info.root()).orElse(null));
-                    recording = new Recording(projectId, provider.key(), ep, info.model(), attribution, startNanos);
+                // Streamed Chat Completions only report usage with stream_options.include_usage. Add it when the
+                // client did not set stream_options at all (only that field changes); if the client set it, even
+                // to include_usage=false, the request is forwarded untouched.
+                if (info.stream() && ep == Endpoint.CHAT_COMPLETIONS && provider.dialect() == Dialect.OPENAI
+                        && props.openaiInjectStreamUsage() && info.root() != null
+                        && !info.root().has("stream_options")) {
+                    outgoing = StreamOptions.injectIncludeUsage(body);
                 }
+                // The fingerprint is computed only if no header or path agent matched; the prompt text never
+                // leaves Fingerprinter, and only the hash is kept.
+                RequestAttribution attribution = RequestAttribution.resolve(request.getHeaders(),
+                        route.agentName(),
+                        () -> fingerprinter == null ? null : fingerprinter.fingerprint(ep, info.root()).orElse(null));
+                recording = new Recording(projectId, provider.key(), ep, info.model(), attribution, startNanos);
             }
         }
         boolean parseResponse = recording != null;
+        byte[] sent = outgoing;
 
         WebClient.RequestBodySpec spec = upstream.method(request.getMethod())
                 .uri(target)
                 .headers(h -> {
                     ProxyHeaders.copyRequestHeaders(request.getHeaders(), h, parseResponse);
-                    if (body.length > 0) {
-                        h.setContentLength(body.length);
+                    if (sent.length > 0) {
+                        h.setContentLength(sent.length);
                     }
                 });
-        WebClient.RequestHeadersSpec<?> call = body.length == 0
+        WebClient.RequestHeadersSpec<?> call = sent.length == 0
                 ? spec
-                : spec.body(BodyInserters.fromDataBuffers(Mono.fromSupplier(() -> response.bufferFactory().wrap(body))));
+                : spec.body(BodyInserters.fromDataBuffers(Mono.fromSupplier(() -> response.bufferFactory().wrap(sent))));
 
         Recording rec = recording;
         return call.exchangeToMono(upstreamResponse -> relay(response, upstreamResponse, rec))
@@ -196,11 +205,31 @@ public class ProxyService {
         boolean eventStream = upstreamResponse.headers().contentType()
                 .map(MediaType.TEXT_EVENT_STREAM::isCompatibleWith)
                 .orElse(false);
-        if (rec == null || eventStream) {
+        int status = upstreamResponse.statusCode().value();
+
+        if (eventStream) {
+            // Each chunk is written and flushed as it arrives; nothing is buffered. A copy of each chunk feeds a
+            // tracker that keeps only a bounded window. If the client disconnects, cancelling this write cancels
+            // the upstream body, which closes the upstream connection so generation (and billing) stops.
+            StreamUsageTracker tracker = rec == null ? null : new StreamUsageTracker(rec.endpoint);
+            Flux<DataBuffer> chunks = tracker == null
+                    ? body
+                    : body.doOnNext(buffer -> {
+                        try (DataBuffer.ByteBufferIterator it = buffer.readableByteBuffers()) {
+                            while (it.hasNext()) {
+                                tracker.feed(it.next());
+                            }
+                        }
+                    });
+            Mono<Void> write = response.writeAndFlushWith(chunks.map(Mono::just));
+            return tracker == null
+                    ? write
+                    : write.doFinally(signal -> rec.finishStream(status, tracker, signal != SignalType.ON_COMPLETE));
+        }
+        if (rec == null) {
             return response.writeWith(body);
         }
         BodyCopy copy = new BodyCopy(props.maxRequestBody().toBytes());
-        int status = upstreamResponse.statusCode().value();
         return response.writeWith(body.doOnNext(copy::append))
                 .doFinally(signal -> rec.finish(status, copy, signal != SignalType.ON_COMPLETE));
     }
@@ -257,13 +286,27 @@ public class ProxyService {
             this.startNanos = startNanos;
         }
 
+        /** Non-streaming response: usage parsed from the side copy of the body. */
         void finish(int status, BodyCopy copy, boolean incomplete) {
+            record(status, () -> parse(copy), false, incomplete);
+        }
+
+        /**
+         * Streamed response: usage seen so far. Incomplete if the stream did not end normally (client disconnect,
+         * upstream dropped, error event, or no final usage, e.g. Chat Completions with include_usage=false).
+         */
+        void finishStream(int status, StreamUsageTracker tracker, boolean abnormalEnd) {
+            record(status, tracker::usage, true, abnormalEnd || !tracker.completedNormally());
+        }
+
+        private void record(int status, java.util.function.Supplier<Usage> usageSupplier, boolean streamed,
+                boolean incomplete) {
             try {
                 int latencyMs = (int) Math.min(Integer.MAX_VALUE, (System.nanoTime() - startNanos) / 1_000_000);
-                Usage usage = parse(copy);
+                Usage usage = usageSupplier.get();
                 String model = usage.model() != null ? usage.model() : requestModel;
                 queue.offer(new UsageEvent(projectId, attribution.agent(), attribution.runId(), attribution.tags(),
-                        provider, endpoint.wireName(), model, usage, false, incomplete, status, latencyMs,
+                        provider, endpoint.wireName(), model, usage, streamed, incomplete, status, latencyMs,
                         Instant.now()));
             } catch (RuntimeException e) {
                 // Never let recording affect the client; never log content.

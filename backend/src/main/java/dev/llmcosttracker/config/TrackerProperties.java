@@ -27,6 +27,8 @@ import org.springframework.validation.annotation.Validated;
  * @param fingerprintEnabled discover agents from a SHA-256 fingerprint of the system prompt
  * @param fingerprintMask   mask numbers, UUIDs, ISO dates and emails before fingerprinting
  * @param accessLog         write an HTTP access log (project keys in paths are redacted)
+ * @param openaiInjectStreamUsage add stream_options.include_usage to streamed Chat Completions requests that
+ *                          do not set stream_options (clients then get one extra final chunk)
  */
 @Validated
 @ConfigurationProperties(prefix = "tracker")
@@ -44,7 +46,8 @@ public record TrackerProperties(
         @Min(1) @DefaultValue("10000") int queueCapacity,
         @DefaultValue("true") boolean fingerprintEnabled,
         @DefaultValue("false") boolean fingerprintMask,
-        @DefaultValue("false") boolean accessLog) {
+        @DefaultValue("false") boolean accessLog,
+        @DefaultValue("true") boolean openaiInjectStreamUsage) {
 
     @Override
     public String toString() {
@@ -54,6 +57,6 @@ public record TrackerProperties(
                 + ", connectTimeout=" + connectTimeout + ", upstreamTimeout=" + upstreamTimeout
                 + ", maxRequestBody=" + maxRequestBody + ", queueCapacity=" + queueCapacity
                 + ", fingerprintEnabled=" + fingerprintEnabled + ", fingerprintMask=" + fingerprintMask
-                + ", accessLog=" + accessLog + "]";
+                + ", accessLog=" + accessLog + ", openaiInjectStreamUsage=" + openaiInjectStreamUsage + "]";
     }
 }

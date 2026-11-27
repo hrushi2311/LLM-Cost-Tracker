@@ -48,6 +48,26 @@ public abstract class ProxyIntegrationTestBase extends PostgresIntegrationTest {
     protected static final MockWebServer ANTHROPIC = started();
     protected static final MockWebServer CUSTOM = started();
     protected static final String CUSTOM_NAME = "localllm";
+    /** A JDK HTTP server registered as provider {@code slowllm}; tests set {@link #slowHandler} to script it. */
+    protected static final com.sun.net.httpserver.HttpServer SLOW = startedSlow();
+    protected static final String SLOW_NAME = "slowllm";
+    protected static volatile com.sun.net.httpserver.HttpHandler slowHandler = exchange -> {
+        exchange.sendResponseHeaders(404, -1);
+        exchange.close();
+    };
+
+    private static com.sun.net.httpserver.HttpServer startedSlow() {
+        try {
+            com.sun.net.httpserver.HttpServer server =
+                    com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("localhost", 0), 0);
+            server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+            server.createContext("/", exchange -> slowHandler.handle(exchange));
+            server.start();
+            return server;
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
 
     private static MockWebServer started() {
         MockWebServer server = new MockWebServer();
@@ -63,7 +83,8 @@ public abstract class ProxyIntegrationTestBase extends PostgresIntegrationTest {
     static void upstreams(DynamicPropertyRegistry registry) {
         registry.add("tracker.openai-base-url", () -> OPENAI.url("/v1").toString());
         registry.add("tracker.anthropic-base-url", () -> ANTHROPIC.url("/").toString());
-        registry.add("tracker.custom-providers", () -> CUSTOM_NAME + "=" + CUSTOM.url("/v1"));
+        registry.add("tracker.custom-providers", () -> CUSTOM_NAME + "=" + CUSTOM.url("/v1") + ","
+                + SLOW_NAME + "=http://localhost:" + SLOW.getAddress().getPort() + "/v1");
     }
 
     @LocalServerPort

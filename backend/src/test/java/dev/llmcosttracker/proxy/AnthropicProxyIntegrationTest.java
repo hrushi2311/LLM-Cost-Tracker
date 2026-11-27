@@ -11,7 +11,6 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.jupiter.api.Test;
 
@@ -124,17 +123,5 @@ class AnthropicProxyIntegrationTest extends ProxyIntegrationTestBase {
         assertThat(events()).isEmpty();
     }
 
-    @Test
-    void streamingRequestsAreRelayedButNotYetRecorded() throws Exception {
-        String sse = "event: message_start\ndata: {\"type\":\"message_start\"}\n\n"
-                + "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
-        ANTHROPIC.enqueue(new MockResponse().setHeader("Content-Type", "text/event-stream").setBody(sse));
-
-        HttpResponse<byte[]> response = rawPost("anthropic", "/v1/messages",
-                "{\"model\":\"claude-sonnet-5-5\",\"stream\":true}", "X-Tracker-Key", projectKey);
-
-        assertThat(new String(response.body(), StandardCharsets.UTF_8)).isEqualTo(sse);
-        Thread.sleep(1500);
-        assertThat(events()).isEmpty(); // streaming is recorded from milestone 5
-    }
+    // Streaming Anthropic calls are covered by StreamingIntegrationTest (milestone 5).
 }

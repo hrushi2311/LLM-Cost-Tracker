@@ -2,7 +2,7 @@
 
 A lightweight, self-hosted LLM cost tracker that discovers your agents automatically. One container plus Postgres, any language, no SDK.
 
-> **Status: milestone 4 of 9.** The proxy forwards OpenAI, Anthropic and custom OpenAI-compatible traffic, records tokens and cost for non-streaming OpenAI Chat Completions, OpenAI Responses and Anthropic Messages, and attributes every call to an agent and an optional run. Streaming and the dashboard come in later milestones. See [SPEC.md](SPEC.md) for the full design and build order.
+> **Status: milestone 5 of 9.** The proxy forwards OpenAI, Anthropic and custom OpenAI-compatible traffic, records tokens and cost for OpenAI Chat Completions, OpenAI Responses and Anthropic Messages (streaming and non-streaming), and attributes every call to an agent and an optional run. The dashboard, budgets and seeded prices come in later milestones. See [SPEC.md](SPEC.md) for the full design and build order.
 
 ## Quick start
 
@@ -124,11 +124,10 @@ All `X-Tracker-*` headers are removed before the request is forwarded.
 
 | Endpoint | Recorded from |
 |---|---|
-| OpenAI Chat Completions (`POST …/chat/completions`), non-streaming | yes |
-| OpenAI Responses (`POST …/responses`), non-streaming | yes |
-| Anthropic Messages (`POST /v1/messages`), non-streaming | yes |
+| OpenAI Chat Completions (`POST …/chat/completions`), streaming and non-streaming | yes |
+| OpenAI Responses (`POST …/responses`), streaming and non-streaming | yes |
+| Anthropic Messages (`POST /v1/messages`), streaming and non-streaming | yes |
 | The same paths on custom OpenAI-compatible providers | yes |
-| Streaming responses | milestone 5 (forwarded unchanged until then) |
 
 All other paths are forwarded unchanged and not recorded. For each recorded call the tracker stores the agent, run ID, tags, model, uncached input, output, cache-read, cache-write and reasoning tokens, cost, status code and latency, and nothing else.
 
@@ -136,9 +135,19 @@ Token counts are normalised so the same columns mean the same thing for every pr
 
 Cost uses the `model_price` table: the row in effect on the call's date, matching the exact model name first, then the longest stored prefix (so `gpt-4o-2024-08-06` is priced as `gpt-4o`). A model with no price is stored with a null cost and can be priced later. The price table ships empty until milestone 8, so add rows yourself for now.
 
-**Known limitation:** Anthropic charges more to write a 1-hour cache entry (2× input) than a 5-minute one (1.25× input). v0.1 uses a single cache-write price per model, so 1-hour cache writes are under-costed. Batch, long-context and regional price tiers are not modelled either.
+**Known limitations:** streamed Chat Completions add one extra final chunk unless you set `stream_options` yourself (see Streaming). Anthropic charges more to write a 1-hour cache entry (2× input) than a 5-minute one (1.25× input). v0.1 uses a single cache-write price per model, so 1-hour cache writes are under-costed. Batch, long-context and regional price tiers are not modelled either.
 
 Recording happens after the response has been sent and never delays or fails a call. If the in-memory queue is full or Postgres is down, events are dropped and counted in the `tracker.events.dropped` metric.
+
+### Streaming
+
+Streamed responses (server-sent events) are passed to your app chunk by chunk as they arrive, unchanged; nothing is buffered. The tracker reads usage from a copy of each chunk while keeping only a small fixed window (128 KB) of the current event, however long the stream is:
+
+- **OpenAI Chat Completions:** usage is only sent when the request has `stream_options.include_usage: true`. If your request does not set `stream_options` at all, the tracker adds `"stream_options":{"include_usage":true}` and changes nothing else in the request. **Your app then receives one extra final chunk before `data: [DONE]`, with an empty `choices` array and the `usage` for the whole request.** The official SDKs handle this chunk; code that reads `choices[0]` from every chunk without checking should skip chunks with empty `choices`. Turn this off with `TRACKER_OPENAI_INJECT_STREAM_USAGE=false`. If you set `stream_options` yourself, even to `include_usage: false`, the request is left untouched. Without usage the call is recorded as incomplete, with zero tokens.
+- **OpenAI Responses:** usage comes from the `response.completed` event.
+- **Anthropic Messages:** input and cache tokens come from `message_start`; output tokens come from the last `message_delta`, whose counts are cumulative.
+
+If your app disconnects mid-stream, the tracker closes the upstream request too, so the provider stops generating (and billing), and records the call as incomplete with whatever usage it had seen. If the provider sends an error event or drops the connection mid-stream, your app receives exactly that, and the call is recorded as incomplete.
 
 ## Privacy
 
@@ -165,6 +174,7 @@ Everything is configured through environment variables; see [.env.example](.env.
 | `TRACKER_UPSTREAM_TIMEOUT` | `10m` | Upstream response timeout |
 | `TRACKER_MAX_REQUEST_BODY` | `20MB` | Largest accepted request body (413 above it) |
 | `TRACKER_QUEUE_CAPACITY` | `10000` | Usage event queue size |
+| `TRACKER_OPENAI_INJECT_STREAM_USAGE` | `true` | Add `stream_options.include_usage` to streamed Chat Completions that do not set `stream_options` (adds one final chunk) |
 | `TRACKER_FINGERPRINT_ENABLED` | `true` | Discover agents from a system-prompt fingerprint |
 | `TRACKER_FINGERPRINT_MASK` | `false` | Mask numbers, UUIDs, ISO dates and emails before fingerprinting |
 | `TRACKER_ACCESS_LOG` | `false` | HTTP access log (project keys in paths are masked) |
