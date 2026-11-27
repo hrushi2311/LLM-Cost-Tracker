@@ -15,7 +15,7 @@ class ProviderRegistryTest {
     private static ProviderRegistry registry(String customProviders) {
         return new ProviderRegistry(new TrackerProperties("test-admin-password", true,
                 URI.create("https://api.openai.com/v1"), URI.create("https://api.anthropic.com"), customProviders,
-                Duration.ofSeconds(10), Duration.ofMinutes(10), DataSize.ofMegabytes(20), 10_000, true, false, false, true));
+                Duration.ofSeconds(10), Duration.ofMinutes(10), DataSize.ofMegabytes(20), 10_000, true, false, false, true, java.time.ZoneId.of("UTC")));
     }
 
     @Test

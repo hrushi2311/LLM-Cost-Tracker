@@ -27,6 +27,35 @@ public class ProjectRepository {
         return new CreatedProject(id, name, key);
     }
 
+    /** A project as listed on the dashboard: the key is only ever shown masked. */
+    public record ProjectRow(UUID id, String name, String keyLast4, java.time.Instant createdAt) {}
+
+    public java.util.List<ProjectRow> list() {
+        return jdbc.query("SELECT id, name, key_last4, created_at FROM project ORDER BY created_at, name",
+                (rs, i) -> new ProjectRow(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3),
+                        rs.getTimestamp(4).toInstant()));
+    }
+
+    public Optional<ProjectRow> find(UUID id) {
+        return jdbc.query("SELECT id, name, key_last4, created_at FROM project WHERE id = ?",
+                        (rs, i) -> new ProjectRow(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3),
+                                rs.getTimestamp(4).toInstant()), id)
+                .stream().findFirst();
+    }
+
+    public boolean exists(UUID id) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS (SELECT 1 FROM project WHERE id = ?)",
+                Boolean.class, id));
+    }
+
+    /** Replaces the key; the old hash is gone from the table at once. Empty if the project does not exist. */
+    public Optional<String> rotateKey(UUID id) {
+        String key = ProjectKeys.generate();
+        int updated = jdbc.update("UPDATE project SET key_hash = ?, key_last4 = ? WHERE id = ?",
+                ProjectKeys.hash(key), ProjectKeys.last4(key), id);
+        return updated == 0 ? Optional.empty() : Optional.of(key);
+    }
+
     public Optional<UUID> findIdByKeyHash(String keyHash) {
         return jdbc.query("SELECT id FROM project WHERE key_hash = ?",
                         (rs, i) -> rs.getObject(1, UUID.class), keyHash)

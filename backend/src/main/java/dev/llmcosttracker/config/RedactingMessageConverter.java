@@ -7,7 +7,7 @@ import java.util.regex.Pattern;
 
 /**
  * Logback converter for {@code %m}/{@code %msg}/{@code %message} that masks credentials before anything is written:
- * values of Authorization, x-api-key and X-Tracker-* headers, bearer tokens, OpenAI-style ({@code sk-…}) or
+ * values of Authorization, x-api-key and X-Tracker-* headers, password fields, bearer tokens, OpenAI-style ({@code sk-…}) or
  * tracker ({@code trk_…}) keys, and the key segment of {@code /proxy/k/{key}/…} paths (whatever its format). The
  * tracker never logs these on purpose; this is the safety net for library, error and access logs.
  */
@@ -21,6 +21,9 @@ public class RedactingMessageConverter extends MessageConverter {
     private static final Pattern BEARER = Pattern.compile("(?i)\\b(bearer\\s+)[A-Za-z0-9._~+/=-]+");
     private static final Pattern PROVIDER_KEY = Pattern.compile("\\b(sk-(?:ant-)?)[A-Za-z0-9_-]{8,}");
     private static final Pattern TRACKER_KEY = Pattern.compile("\\b(trk_)[A-Za-z0-9]{8,}");
+    /** {@code password=…} / {@code "password":"…"}: up to the closing quote, separator or bracket (spaces too). */
+    private static final Pattern PASSWORD = Pattern.compile(
+            "(?i)(\\b(?:password|passwd|secret|x-csrf-token|csrf_?token)\\b[\"']?\\s*[:=]\\s*[\"']?)[^\"'&,\\]}\\r\\n]*");
     private static final Pattern PATH_KEY = Pattern.compile("(/proxy/k/)[^/?#\\s\"']+");
 
     @Override
@@ -33,6 +36,7 @@ public class RedactingMessageConverter extends MessageConverter {
             return message;
         }
         String out = redactPathKey(message);
+        out = replace(PASSWORD, out, m -> m.group(1) + MASK);
         out = replace(HEADER_VALUE, out, m -> m.group(1) + (m.group(2) != null ? m.group(2) : "") + MASK);
         out = replace(BEARER, out, m -> m.group(1) + MASK);
         out = replace(PROVIDER_KEY, out, m -> m.group(1) + MASK);

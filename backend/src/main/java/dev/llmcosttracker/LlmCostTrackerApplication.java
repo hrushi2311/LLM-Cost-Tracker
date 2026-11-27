@@ -1,6 +1,7 @@
 package dev.llmcosttracker;
 
 import dev.llmcosttracker.auth.CreateProjectCommand;
+import dev.llmcosttracker.demo.SeedDemoCommand;
 import java.util.TimeZone;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
@@ -19,8 +20,8 @@ public class LlmCostTrackerApplication {
         // TRACKER_TIMEZONE explicitly, never the JVM default.
         TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
         SpringApplication app = new SpringApplication(LlmCostTrackerApplication.class);
-        if (CreateProjectCommand.isRequested(args)) {
-            // One-shot CLI: create a project, print its key, exit. No web server.
+        if (CreateProjectCommand.isRequested(args) || SeedDemoCommand.isRequested(args)) {
+            // One-shot CLI (--create-project, --seed-demo): do the work, print the key, exit. No web server.
             app.setWebApplicationType(WebApplicationType.NONE);
             System.exit(SpringApplication.exit(app.run(args)));
         }

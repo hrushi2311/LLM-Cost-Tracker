@@ -74,6 +74,21 @@ jobs:
           code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/proxy/openai/chat/completions)
           echo "no key -> $code"; [ "$code" = "401" ]
 
+      - name: Seed demo data and read it through the dashboard API
+        run: |
+          docker compose run --rm -T app --seed-demo=ci-demo --seed-demo-events=2000 | grep -v '^trk_'
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/projects)
+          echo "no session -> $code"; [ "$code" = "401" ]
+          csrf=$(curl -fsS -c jar -H 'Content-Type: application/json' \
+            -d "{\"password\":\"$TRACKER_ADMIN_PASSWORD\"}" http://localhost:8080/api/auth/login | jq -r .csrfToken)
+          [ -n "$csrf" ] && [ "$csrf" != "null" ]
+          id=$(curl -fsS -b jar http://localhost:8080/api/projects | jq -r '.[] | select(.name=="ci-demo") | .id')
+          curl -fsS -b jar "http://localhost:8080/api/projects/$id/summary?from=$(date -u -d '31 days ago' +%F)" \
+            | jq -e '.requests > 1900 and (.costUsd | type) == "string" and .incomplete >= 0'
+          code=$(curl -s -o /dev/null -w '%{http_code}' -b jar -X POST -H 'Content-Type: application/json' \
+            -d '{"name":"no-csrf"}' http://localhost:8080/api/projects)
+          echo "POST without CSRF token -> $code"; [ "$code" = "403" ]
+
       - name: Tear down
         if: always()
         run: docker compose down -v

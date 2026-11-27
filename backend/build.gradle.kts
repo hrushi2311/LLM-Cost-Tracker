@@ -40,9 +40,36 @@ dependencies {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags("perf") // manual check, see perfTest
+    }
     // Same as main(): run in UTC so results never depend on the developer's host time zone.
     systemProperty("user.timezone", "UTC")
+}
+
+// Manual: seeds 1M events and times the dashboard API (docs/DECISIONS.md, Milestone 6). Not run in CI.
+tasks.register<Test>("perfTest") {
+    description = "Seeds one million events and checks dashboard API latency"
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform {
+        includeTags("perf")
+    }
+    systemProperty("user.timezone", "UTC")
+    System.getProperty("perf.events")?.let { systemProperty("perf.events", it) }
+    maxHeapSize = "2g"
+    testLogging {
+        showStandardStreams = true
+    }
+    outputs.upToDateWhen { false }
+}
+
+springBoot {
+    // build-info.properties feeds the version shown by GET /api/status. No timestamp, so builds stay cacheable.
+    buildInfo {
+        excludes = setOf("time")
+    }
 }
 
 tasks.bootJar {

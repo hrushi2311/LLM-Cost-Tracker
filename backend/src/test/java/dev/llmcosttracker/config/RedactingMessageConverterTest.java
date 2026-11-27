@@ -36,6 +36,22 @@ class RedactingMessageConverterTest {
     }
 
     @Test
+    void redactsPasswordFields() {
+        assertThat(RedactingMessageConverter.redact("Decoded [LoginRequest[password=my secret pw]]"))
+                .isEqualTo("Decoded [LoginRequest[password=[REDACTED]]]");
+        assertThat(RedactingMessageConverter.redact("Encoding [{password=hunter2-long, remember=true}]"))
+                .isEqualTo("Encoding [{password=[REDACTED], remember=true}]");
+        assertThat(RedactingMessageConverter.redact("body {\"password\":\"p a s s\"}"))
+                .isEqualTo("body {\"password\":\"[REDACTED]\"}");
+        assertThat(RedactingMessageConverter.redact("Writing \"password=abc123def\""))
+                .isEqualTo("Writing \"password=[REDACTED]\"");
+        assertThat(RedactingMessageConverter.redact("Encoding [SessionInfo[csrfToken=B6DGtf7x9jFJuEXv]]"))
+                .isEqualTo("Encoding [SessionInfo[csrfToken=[REDACTED]]]");
+        assertThat(RedactingMessageConverter.redact("X-CSRF-Token: B6DGtf7x9jFJuEXv"))
+                .isEqualTo("X-CSRF-Token: [REDACTED]");
+    }
+
+    @Test
     void leavesOrdinaryMessagesAlone() {
         String msg = "Dropped 3 usage event(s): queue full (total dropped: 7)";
         assertThat(RedactingMessageConverter.redact(msg)).isEqualTo(msg);

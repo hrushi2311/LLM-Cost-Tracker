@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.net.URI;
 import java.time.Duration;
+import java.time.ZoneId;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.util.unit.DataSize;
@@ -29,6 +30,7 @@ import org.springframework.validation.annotation.Validated;
  * @param accessLog         write an HTTP access log (project keys in paths are redacted)
  * @param openaiInjectStreamUsage add stream_options.include_usage to streamed Chat Completions requests that
  *                          do not set stream_options (clients then get one extra final chunk)
+ * @param timezone          zone for budget periods and day buckets on the dashboard ({@code TRACKER_TIMEZONE})
  */
 @Validated
 @ConfigurationProperties(prefix = "tracker")
@@ -47,7 +49,8 @@ public record TrackerProperties(
         @DefaultValue("true") boolean fingerprintEnabled,
         @DefaultValue("false") boolean fingerprintMask,
         @DefaultValue("false") boolean accessLog,
-        @DefaultValue("true") boolean openaiInjectStreamUsage) {
+        @DefaultValue("true") boolean openaiInjectStreamUsage,
+        @NotNull @DefaultValue("UTC") ZoneId timezone) {
 
     @Override
     public String toString() {
@@ -57,6 +60,6 @@ public record TrackerProperties(
                 + ", connectTimeout=" + connectTimeout + ", upstreamTimeout=" + upstreamTimeout
                 + ", maxRequestBody=" + maxRequestBody + ", queueCapacity=" + queueCapacity
                 + ", fingerprintEnabled=" + fingerprintEnabled + ", fingerprintMask=" + fingerprintMask
-                + ", accessLog=" + accessLog + ", openaiInjectStreamUsage=" + openaiInjectStreamUsage + "]";
+                + ", accessLog=" + accessLog + ", openaiInjectStreamUsage=" + openaiInjectStreamUsage + ", timezone=" + timezone + "]";
     }
 }

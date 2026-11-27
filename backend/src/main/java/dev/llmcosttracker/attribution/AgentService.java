@@ -26,7 +26,7 @@ public class AgentService {
             throw new IllegalArgumentException("Display name is longer than 100 characters");
         }
         if (jdbc.update("UPDATE agent SET display_name = ? WHERE id = ?", value, agentId) == 0) {
-            throw new IllegalArgumentException("Unknown agent");
+            throw new java.util.NoSuchElementException("Unknown agent");
         }
     }
 
@@ -45,9 +45,9 @@ public class AgentService {
                     "SELECT id, project_id, name, fingerprint FROM agent WHERE id IN (?, ?) ORDER BY id FOR UPDATE",
                     fromId, intoId);
             Map<String, Object> from = rows.stream().filter(r -> fromId.equals(r.get("id"))).findFirst()
-                    .orElseThrow(() -> new IllegalArgumentException("Unknown agent to merge"));
+                    .orElseThrow(() -> new java.util.NoSuchElementException("Unknown agent to merge"));
             Map<String, Object> into = rows.stream().filter(r -> intoId.equals(r.get("id"))).findFirst()
-                    .orElseThrow(() -> new IllegalArgumentException("Unknown agent to merge into"));
+                    .orElseThrow(() -> new java.util.NoSuchElementException("Unknown agent to merge into"));
             UUID projectId = (UUID) from.get("project_id");
             if (!projectId.equals(into.get("project_id"))) {
                 throw new IllegalArgumentException("Agents belong to different projects");
