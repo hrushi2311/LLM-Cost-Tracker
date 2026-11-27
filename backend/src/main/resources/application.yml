@@ -10,6 +10,9 @@ spring:
     hikari:
       # Fail fast when Postgres is down; the batch writer drops and counts the batch instead of stalling.
       connection-timeout: 5000
+      # Dashboard ranges vary from an hour to months, so let Postgres plan each query for its actual values
+      # instead of switching to one generic plan after five executions (seen: 0.43 s -> 1.4 s at 1M events).
+      connection-init-sql: SET plan_cache_mode = force_custom_plan
   jackson:
     deserialization:
       # Dashboard API: reject unknown fields in request bodies (SPEC.md, Dashboard REST API).

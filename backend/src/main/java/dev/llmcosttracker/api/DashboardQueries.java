@@ -158,12 +158,24 @@ public class DashboardQueries {
     public record Cell(Instant slot, String group, BigDecimal costUsd, long requests) {}
 
     public List<Cell> timeseries(UUID projectId, TimeRange r, String groupBy) {
-        String groupExpr = groupBy.equals("agent") ? "agent_id::text" : "provider || '/' || COALESCE(model, '')";
-        return jdbc.query("SELECT floor(date_part('epoch', created_at) / " + SLOT_SECONDS + ")::bigint, " + groupExpr
+        // Group by the raw columns (no per-row casts or string building); the key is made in Java.
+        boolean byAgent = groupBy.equals("agent");
+        String groupCols = byAgent ? "agent_id, NULL::text" : "provider, model";
+        return jdbc.query("SELECT floor(date_part('epoch', created_at) / " + SLOT_SECONDS + ")::bigint, " + groupCols
                         + ", COALESCE(SUM(cost_usd), 0), count(*) FROM usage_event "
-                        + "WHERE project_id = ? AND created_at >= ? AND created_at < ? GROUP BY 1, 2",
-                (rs, i) -> new Cell(Instant.ofEpochSecond(rs.getLong(1) * SLOT_SECONDS), rs.getString(2),
-                        rs.getBigDecimal(3), rs.getLong(4)),
+                        + "WHERE project_id = ? AND created_at >= ? AND created_at < ? GROUP BY 1, 2, 3",
+                (rs, i) -> {
+                    String key;
+                    if (byAgent) {
+                        UUID agent = rs.getObject(2, UUID.class);
+                        key = agent == null ? null : agent.toString();
+                    } else {
+                        String model = rs.getString(3);
+                        key = rs.getString(2) + "/" + (model == null ? "" : model);
+                    }
+                    return new Cell(Instant.ofEpochSecond(rs.getLong(1) * SLOT_SECONDS), key, rs.getBigDecimal(4),
+                            rs.getLong(5));
+                },
                 projectId, ts(r.from()), ts(r.to()));
     }
 

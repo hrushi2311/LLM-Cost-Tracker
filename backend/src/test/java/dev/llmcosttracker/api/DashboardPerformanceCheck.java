@@ -22,6 +22,11 @@ import org.springframework.beans.factory.annotation.Autowired;
  * The bar is 500 ms per call; the median and the slowest timed call are printed and the slowest is asserted.
  */
 @Tag("perf")
+@org.springframework.test.context.TestPropertySource(properties = {
+    // Timings, not log checks: keep request logging at its normal level.
+    "logging.level.org.springframework.web=INFO",
+    "logging.level.reactor.netty.http=INFO"
+})
 class DashboardPerformanceCheck extends ApiTestBase {
 
     static final int EVENTS = Integer.getInteger("perf.events", 1_000_000);
