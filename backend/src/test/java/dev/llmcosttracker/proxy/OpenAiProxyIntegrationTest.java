@@ -73,7 +73,9 @@ class OpenAiProxyIntegrationTest extends ProxyIntegrationTestBase {
                 .containsEntry("status_code", 200)
                 .containsEntry("streamed", false)
                 .containsEntry("incomplete", false);
-        assertThat(row.get("agent_id")).isNull();
+        // No header, path segment or system prompt: the call belongs to the "unattributed" agent.
+        assertThat(jdbc.queryForObject("SELECT name || '/' || source FROM agent WHERE id = ?", String.class,
+                row.get("agent_id"))).isEqualTo("unattributed/unattributed");
         // gpt-4o test price (2024 row, matched by prefix): (93*2 + 46*8 + 1024*0.5) / 1e6
         assertThat((BigDecimal) row.get("cost_usd")).isEqualByComparingTo("0.00106600");
         assertThat((Integer) row.get("latency_ms")).isGreaterThanOrEqualTo(0);
@@ -245,7 +247,8 @@ class OpenAiProxyIntegrationTest extends ProxyIntegrationTestBase {
         for (HttpResponse<byte[]> r : List.of(missing, unknown)) {
             assertThat(r.statusCode()).isEqualTo(401);
             assertThat(new String(r.body(), StandardCharsets.UTF_8))
-                    .isEqualTo("{\"error\":{\"code\":\"invalid_project_key\",\"message\":\"Missing or unknown X-Tracker-Key\"}}");
+                    .isEqualTo("{\"error\":{\"code\":\"invalid_project_key\",\"message\":"
+                            + "\"Missing or unknown project key (X-Tracker-Key header or /proxy/k/{key}/ path)\"}}");
         }
         assertThat(OPENAI.getRequestCount()).isEqualTo(before);
     }

@@ -2,7 +2,7 @@
 
 A lightweight, self-hosted LLM cost tracker that discovers your agents automatically. One container plus Postgres, any language, no SDK.
 
-> **Status: milestone 3 of 9.** The proxy forwards OpenAI, Anthropic and custom OpenAI-compatible traffic, and records tokens and cost for non-streaming OpenAI Chat Completions, OpenAI Responses and Anthropic Messages. Agents, streaming and the dashboard come in later milestones. See [SPEC.md](SPEC.md) for the full design and build order.
+> **Status: milestone 4 of 9.** The proxy forwards OpenAI, Anthropic and custom OpenAI-compatible traffic, records tokens and cost for non-streaming OpenAI Chat Completions, OpenAI Responses and Anthropic Messages, and attributes every call to an agent and an optional run. Streaming and the dashboard come in later milestones. See [SPEC.md](SPEC.md) for the full design and build order.
 
 ## Quick start
 
@@ -91,7 +91,34 @@ TRACKER_CUSTOM_PROVIDERS=groq=https://api.groq.com/openai/v1,local=http://ollama
 
 Point the OpenAI SDK at `http://host:8080/proxy/groq`. Calls are parsed like OpenAI's and stored with `provider = groq`, so they are priced from `groq` rows in the price table. The proxy only ever calls the configured URL. Names must be lowercase (`a-z`, `0-9`, `-`), and a malformed entry stops the app at startup.
 
-An optional `/agent/{name}` segment (`/proxy/openai/agent/planner/...`) is stripped before forwarding; agent attribution arrives in milestone 4.
+### Project key in the URL (when you can only change the base URL)
+
+Some tools let you set a base URL but not extra headers. For those, put the project key in the path instead:
+
+```
+OPENAI_BASE_URL=http://localhost:8080/proxy/k/trk_.../openai
+```
+
+The `X-Tracker-Key` header is still the recommended option: URLs end up in more places (shell history, client-side logs, proxies) than headers do. The tracker masks the key in every log line it writes, including the access log, and never forwards it upstream. If both are given, the header wins.
+
+## Agents, runs and tags
+
+Every recorded call belongs to exactly one agent, found in this order (first match wins):
+
+1. **Header:** `X-Tracker-Agent: researcher`.
+2. **URL path:** `http://host:8080/proxy/openai/agent/researcher` as the base URL.
+3. **Fingerprint:** a SHA-256 hash of the system prompt (Chat Completions `system`/`developer` messages, Responses `instructions`, Anthropic `system`). The agent is named `agent-a3f9` from the first hex characters, and calls with the same system prompt land on the same agent whatever the user message. Only the hash is stored, never the prompt.
+4. Otherwise the agent named `unattributed`.
+
+Agents are created on first sight; there is nothing to register. Names are normalised to lowercase slugs (`Customer Support Bot` becomes `customer-support-bot`). Set `TRACKER_FINGERPRINT_MASK=true` if your system prompts are templates: numbers, UUIDs, ISO dates and email addresses are then replaced before hashing, so `Customer 1042 …` and `Customer 77 …` stay one agent.
+
+Agents can be renamed (display name only; the slug keeps matching) and merged. A merge moves the old agent's calls to the new one and records its name and fingerprint as aliases, so later calls follow automatically. Both arrive in the dashboard in milestone 6.
+
+**Runs:** send `X-Tracker-Run-Id: <id>` (up to 128 printable characters) on every call of one task to group them, across agents.
+
+**Tags:** `X-Tracker-Tag-<key>: <value>` adds free-form tags (up to 10 per call; key up to 32, value up to 128 characters). Invalid or extra tags are ignored.
+
+All `X-Tracker-*` headers are removed before the request is forwarded.
 
 ## What gets recorded
 
@@ -103,7 +130,7 @@ An optional `/agent/{name}` segment (`/proxy/openai/agent/planner/...`) is strip
 | The same paths on custom OpenAI-compatible providers | yes |
 | Streaming responses | milestone 5 (forwarded unchanged until then) |
 
-All other paths are forwarded unchanged and not recorded. For each recorded call the tracker stores the model, uncached input, output, cache-read, cache-write and reasoning tokens, cost, status code and latency, and nothing else.
+All other paths are forwarded unchanged and not recorded. For each recorded call the tracker stores the agent, run ID, tags, model, uncached input, output, cache-read, cache-write and reasoning tokens, cost, status code and latency, and nothing else.
 
 Token counts are normalised so the same columns mean the same thing for every provider. OpenAI reports input including cached tokens, so the cached part is subtracted. Anthropic's `input_tokens` already excludes cache reads and writes, so it is stored as reported. Reasoning and thinking tokens are already counted in output; they are stored for display and never charged twice.
 
@@ -118,7 +145,9 @@ Recording happens after the response has been sent and never delays or fails a c
 - **Never stored or logged:** prompts, completions, system prompts, and request or response bodies.
 - **Never stored or logged:** provider API keys (`Authorization`, `x-api-key`) and project keys. Log output passes through a redacting filter as a safety net.
 - **Never forwarded:** `X-Tracker-*` headers are removed before forwarding.
-- **Stored:** counts, costs, timings, model names, and the SHA-256 hash plus last 4 characters of each project key.
+- **Never stored or logged:** system prompts. Only their SHA-256 fingerprint is kept.
+- **Never logged:** a project key given in the URL (`/proxy/k/{key}/…`). It is masked in application, error and access logs.
+- **Stored:** counts, costs, timings, model names, agent names, run IDs and tags you send, system-prompt fingerprints, and the SHA-256 hash plus last 4 characters of each project key.
 
 ## Configuration
 
@@ -136,6 +165,9 @@ Everything is configured through environment variables; see [.env.example](.env.
 | `TRACKER_UPSTREAM_TIMEOUT` | `10m` | Upstream response timeout |
 | `TRACKER_MAX_REQUEST_BODY` | `20MB` | Largest accepted request body (413 above it) |
 | `TRACKER_QUEUE_CAPACITY` | `10000` | Usage event queue size |
+| `TRACKER_FINGERPRINT_ENABLED` | `true` | Discover agents from a system-prompt fingerprint |
+| `TRACKER_FINGERPRINT_MASK` | `false` | Mask numbers, UUIDs, ISO dates and emails before fingerprinting |
+| `TRACKER_ACCESS_LOG` | `false` | HTTP access log (project keys in paths are masked) |
 | `SPRING_DATASOURCE_URL` | `jdbc:postgresql://db:5432/llmtracker` | Point at your own Postgres 16 to run only the `app` service |
 | `SPRING_DATASOURCE_USERNAME` / `_PASSWORD` | `tracker` / required | Database credentials |
 | `SERVER_PORT` | `8080` | HTTP port |

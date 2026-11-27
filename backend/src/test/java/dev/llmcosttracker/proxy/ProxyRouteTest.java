@@ -14,7 +14,7 @@ class ProxyRouteTest {
     void parsesProviderAndPath() {
         ProxyRoute r = ProxyRoute.parse("/proxy/openai/chat/completions").orElseThrow();
 
-        assertThat(r).isEqualTo(new ProxyRoute("openai", null, "/chat/completions"));
+        assertThat(r).isEqualTo(new ProxyRoute(null, "openai", null, "/chat/completions"));
         assertThat(r.upstreamUri(OPENAI, null)).contains(URI.create("https://api.openai.com/v1/chat/completions"));
     }
 
@@ -32,6 +32,24 @@ class ProxyRouteTest {
 
         assertThat(r.upstreamUri(ANTHROPIC, "limit=2&after=x%20y"))
                 .contains(URI.create("https://api.anthropic.com/v1/models/a%2Fb?limit=2&after=x%20y"));
+    }
+
+    @Test
+    void pathKeyIsParsedAndNeverPartOfTheUpstreamPath() {
+        ProxyRoute r = ProxyRoute.parse("/proxy/k/trk_AbC123/openai/agent/planner/chat/completions").orElseThrow();
+
+        assertThat(r.pathKey()).isEqualTo("trk_AbC123");
+        assertThat(r.provider()).isEqualTo("openai");
+        assertThat(r.agentName()).isEqualTo("planner");
+        assertThat(r.upstreamUri(OPENAI, null)).contains(URI.create("https://api.openai.com/v1/chat/completions"));
+        assertThat(r.toString()).doesNotContain("trk_AbC123");
+    }
+
+    @Test
+    void pathKeyNeedsAProviderAfterIt() {
+        assertThat(ProxyRoute.parse("/proxy/k/trk_AbC123")).isEmpty();
+        assertThat(ProxyRoute.parse("/proxy/k/trk_AbC123/")).isEmpty();
+        assertThat(ProxyRoute.parse("/proxy/k//openai/chat/completions")).isEmpty();
     }
 
     @Test

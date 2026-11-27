@@ -2,6 +2,8 @@ package dev.llmcosttracker.proxy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.llmcosttracker.attribution.Fingerprinter;
+import dev.llmcosttracker.attribution.RequestAttribution;
 import dev.llmcosttracker.auth.ProjectKeyService;
 import dev.llmcosttracker.config.TrackerProperties;
 import dev.llmcosttracker.ingest.UsageEvent;
@@ -52,6 +54,7 @@ public class ProxyService {
     private final WebClient upstream;
     private final UsageEventQueue queue;
     private final TrackerProperties props;
+    private final Fingerprinter fingerprinter;
 
     public ProxyService(ProviderRegistry providers, ProjectKeyService projectKeys, WebClient upstreamWebClient,
             UsageEventQueue queue, TrackerProperties props) {
@@ -60,6 +63,7 @@ public class ProxyService {
         this.upstream = upstreamWebClient;
         this.queue = queue;
         this.props = props;
+        this.fingerprinter = props.fingerprintEnabled() ? new Fingerprinter(props.fingerprintMask()) : null;
     }
 
     /** Thrown when an uncached project key cannot be checked because the database is unavailable. */
@@ -93,7 +97,9 @@ public class ProxyService {
             return tooLarge(response);
         }
 
-        String key = request.getHeaders().getFirst(ProxyHeaders.PROJECT_KEY);
+        // The header is the recommended way; /proxy/k/{key}/… is for clients that can only change the base URL.
+        String headerKey = request.getHeaders().getFirst(ProxyHeaders.PROJECT_KEY);
+        String key = headerKey != null && !headerKey.isBlank() ? headerKey : route.get().pathKey();
         return projectKeys.resolve(key)
                 .map(Optional::of)
                 .defaultIfEmpty(Optional.empty())
@@ -101,7 +107,7 @@ public class ProxyService {
                 .flatMap(projectId -> {
                     if (projectId.isEmpty() && props.requireProjectKey()) {
                         return ProxyErrors.write(response, HttpStatus.UNAUTHORIZED, "invalid_project_key",
-                                "Missing or unknown X-Tracker-Key");
+                                "Missing or unknown project key (X-Tracker-Key header or /proxy/k/{key}/ path)");
                     }
                     return readBody(request).flatMap(body -> forward(exchange, provider.get(), route.get(),
                             target.get(), projectId.orElse(null), body, startNanos));
@@ -143,7 +149,13 @@ public class ProxyService {
                 RequestInfo info = RequestInfo.of(body);
                 // Streaming responses are relayed but recorded from milestone 5.
                 if (!info.stream()) {
-                    recording = new Recording(projectId, provider.key(), endpoint.get(), info.model(), startNanos);
+                    Endpoint ep = endpoint.get();
+                    // The fingerprint is computed only if no header or path agent matched; the prompt text never
+                    // leaves Fingerprinter, and only the hash is kept.
+                    RequestAttribution attribution = RequestAttribution.resolve(request.getHeaders(),
+                            route.agentName(),
+                            () -> fingerprinter == null ? null : fingerprinter.fingerprint(ep, info.root()).orElse(null));
+                    recording = new Recording(projectId, provider.key(), ep, info.model(), attribution, startNanos);
                 }
             }
         }
@@ -202,19 +214,27 @@ public class ProxyService {
         return false;
     }
 
-    /** What the proxy reads from a recorded request body: the model (fallback) and the stream flag. Nothing else. */
-    record RequestInfo(String model, boolean stream) {
+    /**
+     * What the proxy reads from a recorded request body: the model (fallback), the stream flag, and the parsed tree
+     * for fingerprinting. The tree is dropped as soon as {@link #forward} returns; nothing from it is stored.
+     */
+    record RequestInfo(String model, boolean stream, JsonNode root) {
         static RequestInfo of(byte[] body) {
             try {
                 JsonNode root = JSON.readTree(body);
                 if (root == null || !root.isObject()) {
-                    return new RequestInfo(null, false);
+                    return new RequestInfo(null, false, null);
                 }
                 String model = root.path("model").isTextual() ? root.path("model").asText() : null;
-                return new RequestInfo(model, root.path("stream").asBoolean(false));
+                return new RequestInfo(model, root.path("stream").asBoolean(false), root);
             } catch (Exception e) {
-                return new RequestInfo(null, false);
+                return new RequestInfo(null, false, null);
             }
+        }
+
+        @Override
+        public String toString() {
+            return "RequestInfo[model=" + model + ", stream=" + stream + "]"; // never print the body
         }
     }
 
@@ -224,13 +244,16 @@ public class ProxyService {
         private final String provider;
         private final Endpoint endpoint;
         private final String requestModel;
+        private final RequestAttribution attribution;
         private final long startNanos;
 
-        Recording(UUID projectId, String provider, Endpoint endpoint, String requestModel, long startNanos) {
+        Recording(UUID projectId, String provider, Endpoint endpoint, String requestModel,
+                RequestAttribution attribution, long startNanos) {
             this.projectId = projectId;
             this.provider = provider;
             this.endpoint = endpoint;
             this.requestModel = requestModel;
+            this.attribution = attribution;
             this.startNanos = startNanos;
         }
 
@@ -239,8 +262,9 @@ public class ProxyService {
                 int latencyMs = (int) Math.min(Integer.MAX_VALUE, (System.nanoTime() - startNanos) / 1_000_000);
                 Usage usage = parse(copy);
                 String model = usage.model() != null ? usage.model() : requestModel;
-                queue.offer(new UsageEvent(projectId, null, null, provider, endpoint.wireName(), model, usage,
-                        false, incomplete, status, latencyMs, Instant.now()));
+                queue.offer(new UsageEvent(projectId, attribution.agent(), attribution.runId(), attribution.tags(),
+                        provider, endpoint.wireName(), model, usage, false, incomplete, status, latencyMs,
+                        Instant.now()));
             } catch (RuntimeException e) {
                 // Never let recording affect the client; never log content.
                 log.warn("Could not record usage event ({})", e.getClass().getSimpleName());

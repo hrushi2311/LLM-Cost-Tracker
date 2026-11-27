@@ -4,22 +4,36 @@ import java.net.URI;
 import java.util.Optional;
 
 /**
- * Parsed {@code /proxy/{provider}[/agent/{agentName}]/{path...}}. Works on the raw (still percent-encoded) path so
- * the forwarded path is byte-for-byte what the client sent, minus the proxy prefix and agent segment.
+ * Parsed {@code /proxy[/k/{projectKey}]/{provider}[/agent/{agentName}]/{path...}}. Works on the raw (still
+ * percent-encoded) path so the forwarded path is byte-for-byte what the client sent, minus the proxy prefix, the
+ * key segment and the agent segment.
  *
+ * @param pathKey      project key given in the path ({@code /proxy/k/{key}/…}), or null; never forwarded or logged
  * @param provider     provider key, e.g. {@code openai}
- * @param agentName    raw agent segment, or null (resolved into an agent in milestone 4)
+ * @param agentName    raw agent segment, or null
  * @param upstreamPath path to append to the provider base URL; empty or starting with {@code /}
  */
-public record ProxyRoute(String provider, String agentName, String upstreamPath) {
+public record ProxyRoute(String pathKey, String provider, String agentName, String upstreamPath) {
 
     static final String PREFIX = "/proxy/";
+    /** Reserved first segment for a path-based project key; no provider may be named this. */
+    public static final String KEY_SEGMENT = "k";
 
     public static Optional<ProxyRoute> parse(String rawPath) {
         if (rawPath == null || !rawPath.startsWith(PREFIX)) {
             return Optional.empty();
         }
         String rest = rawPath.substring(PREFIX.length());
+        String key = null;
+        if (rest.startsWith(KEY_SEGMENT + "/")) {
+            String afterK = rest.substring(KEY_SEGMENT.length() + 1);
+            int end = afterK.indexOf('/');
+            if (end <= 0) {
+                return Optional.empty(); // /proxy/k/{key} with no provider, or an empty key
+            }
+            key = afterK.substring(0, end);
+            rest = afterK.substring(end + 1);
+        }
         int slash = rest.indexOf('/');
         String provider = slash < 0 ? rest : rest.substring(0, slash);
         String path = slash < 0 ? "" : rest.substring(slash);
@@ -36,7 +50,7 @@ public record ProxyRoute(String provider, String agentName, String upstreamPath)
                 agent = null;
             }
         }
-        return Optional.of(new ProxyRoute(provider, agent, path));
+        return Optional.of(new ProxyRoute(key, provider, agent, path));
     }
 
     /**
@@ -56,5 +70,11 @@ public record ProxyRoute(String provider, String agentName, String upstreamPath)
         } catch (java.net.URISyntaxException e) {
             return Optional.empty();
         }
+    }
+
+    @Override
+    public String toString() {
+        return "ProxyRoute[pathKey=" + (pathKey == null ? "none" : "***") + ", provider=" + provider
+                + ", agentName=" + agentName + ", upstreamPath=" + upstreamPath + "]";
     }
 }

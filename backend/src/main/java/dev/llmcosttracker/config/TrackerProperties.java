@@ -24,6 +24,9 @@ import org.springframework.validation.annotation.Validated;
  * @param upstreamTimeout   upstream response timeout
  * @param maxRequestBody    largest request body the proxy accepts
  * @param queueCapacity     size of the in-memory usage event queue
+ * @param fingerprintEnabled discover agents from a SHA-256 fingerprint of the system prompt
+ * @param fingerprintMask   mask numbers, UUIDs, ISO dates and emails before fingerprinting
+ * @param accessLog         write an HTTP access log (project keys in paths are redacted)
  */
 @Validated
 @ConfigurationProperties(prefix = "tracker")
@@ -38,7 +41,10 @@ public record TrackerProperties(
         @NotNull @DefaultValue("10s") Duration connectTimeout,
         @NotNull @DefaultValue("10m") Duration upstreamTimeout,
         @NotNull @DefaultValue("20MB") DataSize maxRequestBody,
-        @Min(1) @DefaultValue("10000") int queueCapacity) {
+        @Min(1) @DefaultValue("10000") int queueCapacity,
+        @DefaultValue("true") boolean fingerprintEnabled,
+        @DefaultValue("false") boolean fingerprintMask,
+        @DefaultValue("false") boolean accessLog) {
 
     @Override
     public String toString() {
@@ -46,6 +52,8 @@ public record TrackerProperties(
                 + ", openaiBaseUrl=" + openaiBaseUrl + ", anthropicBaseUrl=" + anthropicBaseUrl
                 + ", customProviders=" + customProviders
                 + ", connectTimeout=" + connectTimeout + ", upstreamTimeout=" + upstreamTimeout
-                + ", maxRequestBody=" + maxRequestBody + ", queueCapacity=" + queueCapacity + "]";
+                + ", maxRequestBody=" + maxRequestBody + ", queueCapacity=" + queueCapacity
+                + ", fingerprintEnabled=" + fingerprintEnabled + ", fingerprintMask=" + fingerprintMask
+                + ", accessLog=" + accessLog + "]";
     }
 }

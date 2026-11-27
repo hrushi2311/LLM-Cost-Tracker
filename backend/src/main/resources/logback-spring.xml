@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Spring Boot's default console logging, with every message passed through the credential redactor. -->
+<!-- Spring Boot's default console logging, with every message and stack trace passed through the credential redactor. -->
 <configuration>
     <conversionRule conversionWord="m" converterClass="dev.llmcosttracker.config.RedactingMessageConverter"/>
     <conversionRule conversionWord="msg" converterClass="dev.llmcosttracker.config.RedactingMessageConverter"/>
     <conversionRule conversionWord="message" converterClass="dev.llmcosttracker.config.RedactingMessageConverter"/>
 
     <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <!-- After defaults.xml (which defines wEx) and before the appender is built from the pattern. -->
+    <conversionRule conversionWord="wEx" converterClass="dev.llmcosttracker.config.RedactingThrowableConverter"/>
+
     <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
 
     <root level="INFO">

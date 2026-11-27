@@ -26,6 +26,16 @@ class RedactingMessageConverterTest {
     }
 
     @Test
+    void redactsProjectKeyInProxyPathsWhateverItsFormat() {
+        String out = RedactingMessageConverter.redact(
+                "HTTP POST \"/proxy/k/trk_9f8e7d6c5b4a/openai/chat/completions\" and /proxy/k/short-Key_1?x=1");
+
+        assertThat(out)
+                .doesNotContain("9f8e7d6c5b4a", "short-Key_1")
+                .contains("/proxy/k/[REDACTED]/openai/chat/completions", "/proxy/k/[REDACTED]?x=1");
+    }
+
+    @Test
     void leavesOrdinaryMessagesAlone() {
         String msg = "Dropped 3 usage event(s): queue full (total dropped: 7)";
         assertThat(RedactingMessageConverter.redact(msg)).isEqualTo(msg);

@@ -1,5 +1,9 @@
 package dev.llmcosttracker.ingest;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.llmcosttracker.attribution.AgentRef;
+import dev.llmcosttracker.attribution.AgentRepository;
 import dev.llmcosttracker.pricing.CostCalculator;
 import dev.llmcosttracker.pricing.PriceRepository;
 import dev.llmcosttracker.pricing.PriceTable;
@@ -7,8 +11,12 @@ import java.math.BigDecimal;
 import java.sql.Types;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,20 +40,24 @@ public class BatchWriter implements SmartLifecycle {
     private static final String INSERT = "INSERT INTO usage_event (project_id, agent_id, run_id, provider, endpoint, "
             + "model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, cost_usd, "
             + "streamed, incomplete, status_code, latency_ms, tags, created_at) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)";
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)";
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final UsageEventQueue queue;
     private final JdbcTemplate jdbc;
     private final TransactionTemplate tx;
     private final PriceRepository prices;
+    private final AgentRepository agents;
     private volatile boolean running;
     private Thread thread;
 
-    public BatchWriter(UsageEventQueue queue, JdbcTemplate jdbc, TransactionTemplate tx, PriceRepository prices) {
+    public BatchWriter(UsageEventQueue queue, JdbcTemplate jdbc, TransactionTemplate tx, PriceRepository prices,
+            AgentRepository agents) {
         this.queue = queue;
         this.jdbc = jdbc;
         this.tx = tx;
         this.prices = prices;
+        this.agents = agents;
     }
 
     @Override
@@ -109,17 +121,32 @@ public class BatchWriter implements SmartLifecycle {
         return batch;
     }
 
+    private record AgentKey(UUID projectId, AgentRef ref) {}
+
+    /**
+     * One transaction per batch: resolve each distinct agent reference (alias first, then upsert), insert the
+     * priced events, and move each agent's last_seen forward.
+     */
     void write(List<UsageEvent> batch) {
         try {
             PriceTable table = prices.load();
-            List<Object[]> rows = new ArrayList<>(batch.size());
-            for (UsageEvent e : batch) {
-                rows.add(toRow(e, cost(table, e)));
-            }
             int[] types = {Types.OTHER, Types.OTHER, Types.VARCHAR, Types.VARCHAR, Types.VARCHAR, Types.VARCHAR,
                     Types.INTEGER, Types.INTEGER, Types.INTEGER, Types.INTEGER, Types.INTEGER, Types.NUMERIC,
-                    Types.BOOLEAN, Types.BOOLEAN, Types.INTEGER, Types.INTEGER, Types.TIMESTAMP_WITH_TIMEZONE};
-            tx.executeWithoutResult(s -> jdbc.batchUpdate(INSERT, rows, types));
+                    Types.BOOLEAN, Types.BOOLEAN, Types.INTEGER, Types.INTEGER, Types.VARCHAR,
+                    Types.TIMESTAMP_WITH_TIMEZONE};
+            tx.executeWithoutResult(s -> {
+                Map<AgentKey, UUID> agentIds = new HashMap<>();
+                Map<UUID, Instant> lastSeen = new HashMap<>();
+                List<Object[]> rows = new ArrayList<>(batch.size());
+                for (UsageEvent e : batch) {
+                    UUID agentId = agentIds.computeIfAbsent(new AgentKey(e.projectId(), e.agent()),
+                            k -> agents.resolve(k.projectId(), k.ref(), e.createdAt()));
+                    lastSeen.merge(agentId, e.createdAt(), (a, b) -> a.isAfter(b) ? a : b);
+                    rows.add(toRow(e, agentId, cost(table, e)));
+                }
+                jdbc.batchUpdate(INSERT, rows, types);
+                agents.touch(lastSeen);
+            });
         } catch (RuntimeException ex) {
             queue.recordDropped(batch.size(), "database unavailable (" + ex.getClass().getSimpleName() + ")");
         }
@@ -132,13 +159,24 @@ public class BatchWriter implements SmartLifecycle {
                 .orElse(null);
     }
 
-    private static Object[] toRow(UsageEvent e, BigDecimal cost) {
+    private static Object[] toRow(UsageEvent e, UUID agentId, BigDecimal cost) {
         return new Object[] {
-            e.projectId(), e.agentId(), e.runId(), e.provider(), e.endpoint(), e.model(),
+            e.projectId(), agentId, e.runId(), e.provider(), e.endpoint(), e.model(),
             e.usage().inputTokens(), e.usage().outputTokens(), e.usage().cacheReadTokens(),
             e.usage().cacheWriteTokens(), e.usage().reasoningTokens(), cost,
-            e.streamed(), e.incomplete(), e.statusCode(), e.latencyMs(),
+            e.streamed(), e.incomplete(), e.statusCode(), e.latencyMs(), tagsJson(e.tags()),
             e.createdAt().atOffset(ZoneOffset.UTC)
         };
+    }
+
+    private static String tagsJson(Map<String, String> tags) {
+        if (tags == null || tags.isEmpty()) {
+            return null;
+        }
+        try {
+            return JSON.writeValueAsString(tags);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(e);
+        }
     }
 }

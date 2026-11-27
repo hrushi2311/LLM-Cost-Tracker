@@ -15,7 +15,7 @@ class ProviderRegistryTest {
     private static ProviderRegistry registry(String customProviders) {
         return new ProviderRegistry(new TrackerProperties("test-admin-password", true,
                 URI.create("https://api.openai.com/v1"), URI.create("https://api.anthropic.com"), customProviders,
-                Duration.ofSeconds(10), Duration.ofMinutes(10), DataSize.ofMegabytes(20), 10_000));
+                Duration.ofSeconds(10), Duration.ofMinutes(10), DataSize.ofMegabytes(20), 10_000, true, false, false));
     }
 
     @Test
@@ -43,6 +43,7 @@ class ProviderRegistryTest {
                 "Groq=https://x.example",                  // not a lowercase slug
                 "my_llm=https://x.example",                // underscore
                 "openai=https://x.example",                // reserved
+                "k=https://x.example",                     // reserved for /proxy/k/{key}/
                 "a=https://x.example,a=https://y.example", // duplicate
                 "a=ftp://x.example",                       // not http(s)
                 "a=/relative/path",                        // no host

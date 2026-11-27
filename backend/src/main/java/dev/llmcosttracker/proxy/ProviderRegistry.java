@@ -32,7 +32,7 @@ public class ProviderRegistry {
         all.put("openai", new Provider("openai", props.openaiBaseUrl(), Dialect.OPENAI));
         all.put("anthropic", new Provider("anthropic", props.anthropicBaseUrl(), Dialect.ANTHROPIC));
         for (Provider custom : parseCustomProviders(props.customProviders())) {
-            if (all.putIfAbsent(custom.key(), custom) != null) {
+            if (custom.key().equals(ProxyRoute.KEY_SEGMENT) || all.putIfAbsent(custom.key(), custom) != null) {
                 throw invalid("provider name '" + custom.key() + "' is reserved or listed twice");
             }
         }

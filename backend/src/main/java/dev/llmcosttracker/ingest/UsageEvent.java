@@ -1,14 +1,20 @@
 package dev.llmcosttracker.ingest;
 
+import dev.llmcosttracker.attribution.AgentRef;
 import dev.llmcosttracker.provider.Usage;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 
-/** One recorded call, as offered to the queue. Cost is computed later by the batch writer. Never holds content. */
+/**
+ * One recorded call, as offered to the queue. The agent is still a reference (header/path name or fingerprint
+ * hash); the batch writer resolves it to an agent id and computes cost. Never holds prompt or response content.
+ */
 public record UsageEvent(
         UUID projectId,
-        UUID agentId,
+        AgentRef agent,
         String runId,
+        Map<String, String> tags,
         String provider,
         String endpoint,
         String model,

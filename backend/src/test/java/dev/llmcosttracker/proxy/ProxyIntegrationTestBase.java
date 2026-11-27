@@ -35,6 +35,8 @@ import org.springframework.test.context.DynamicPropertySource;
         webEnvironment = WebEnvironment.RANDOM_PORT,
         properties = {
             "tracker.admin-password=test-admin-password",
+            // Access log on, so "never logged" tests also cover it.
+            "tracker.access-log=true",
             // Turn up the loggers most likely to print headers, so "never logged" tests are meaningful.
             "logging.level.dev.llmcosttracker=DEBUG",
             "logging.level.org.springframework.web=DEBUG",

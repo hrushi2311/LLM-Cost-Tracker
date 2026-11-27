@@ -7,8 +7,9 @@ import java.util.regex.Pattern;
 
 /**
  * Logback converter for {@code %m}/{@code %msg}/{@code %message} that masks credentials before anything is written:
- * values of Authorization, x-api-key and X-Tracker-* headers, bearer tokens, and OpenAI-style ({@code sk-…}) or
- * tracker ({@code trk_…}) keys. The tracker never logs these on purpose; this is the safety net for library logs.
+ * values of Authorization, x-api-key and X-Tracker-* headers, bearer tokens, OpenAI-style ({@code sk-…}) or
+ * tracker ({@code trk_…}) keys, and the key segment of {@code /proxy/k/{key}/…} paths (whatever its format). The
+ * tracker never logs these on purpose; this is the safety net for library, error and access logs.
  */
 public class RedactingMessageConverter extends MessageConverter {
 
@@ -20,6 +21,7 @@ public class RedactingMessageConverter extends MessageConverter {
     private static final Pattern BEARER = Pattern.compile("(?i)\\b(bearer\\s+)[A-Za-z0-9._~+/=-]+");
     private static final Pattern PROVIDER_KEY = Pattern.compile("\\b(sk-(?:ant-)?)[A-Za-z0-9_-]{8,}");
     private static final Pattern TRACKER_KEY = Pattern.compile("\\b(trk_)[A-Za-z0-9]{8,}");
+    private static final Pattern PATH_KEY = Pattern.compile("(/proxy/k/)[^/?#\\s\"']+");
 
     @Override
     public String convert(ILoggingEvent event) {
@@ -30,11 +32,17 @@ public class RedactingMessageConverter extends MessageConverter {
         if (message == null || message.isEmpty()) {
             return message;
         }
-        String out = replace(HEADER_VALUE, message, m -> m.group(1) + (m.group(2) != null ? m.group(2) : "") + MASK);
+        String out = redactPathKey(message);
+        out = replace(HEADER_VALUE, out, m -> m.group(1) + (m.group(2) != null ? m.group(2) : "") + MASK);
         out = replace(BEARER, out, m -> m.group(1) + MASK);
         out = replace(PROVIDER_KEY, out, m -> m.group(1) + MASK);
         out = replace(TRACKER_KEY, out, m -> m.group(1) + MASK);
         return out;
+    }
+
+    /** Masks the key in {@code /proxy/k/{key}/…}; also used directly by the access log. */
+    public static String redactPathKey(String text) {
+        return text == null ? null : replace(PATH_KEY, text, m -> m.group(1) + MASK);
     }
 
     private static String replace(Pattern p, String input, java.util.function.Function<Matcher, String> f) {
