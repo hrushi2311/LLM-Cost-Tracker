@@ -136,5 +136,18 @@ Choices made where SPEC.md was ambiguous or had to be adapted. Newest last.
   - *No `DISTINCT` over the range.* `count(DISTINCT run_id)` and `count(DISTINCT agent_id)` sort every row. Active agents now come from the small grouped result. Runs are counted with `GROUP BY run_id` in a subquery, which is a hash aggregate.
   - *Cheap buckets.* `date_trunc(…, zone)` per row costs a time-zone conversion for every event. `floor(date_part('epoch', created_at) / 900)` is plain arithmetic, and Java maps the few thousand slots to local buckets.
   - *Runs by walking the index* (above).
-  - Measurement: `./gradlew :backend:perfTest` (manual, excluded from `test`), and the manual `perf.yml` workflow on a standard GitHub runner. Both seed 1,000,000 demo events over 30 days and time each endpoint over HTTP: one warm-up, then 5 calls. On the development laptop the timings were unusable, because the machine was heavily throttled: a CPU-only `SELECT count(*) FROM generate_series(1, 2000000)` took 5–14 s instead of about 0.15 s. The reference numbers therefore come from the GitHub runner.
+  - *A plan per query.* PostgreSQL switches a prepared statement to one generic plan after five executions. With ranges from an hour to months, that made 30-day calls jump from 0.43 s to 1.4 s, so the pool sets `plan_cache_mode = force_custom_plan` on each connection. Planning costs well under a millisecond here.
+  - *The demo seed runs `VACUUM (ANALYZE)`*, as autovacuum would on a live table, so index-only scans need no heap fetches and autovacuum doesn't start in the middle of a measurement.
+  - Measurement: `./gradlew :backend:perfTest` (manual, excluded from `test`), and the manual `perf.yml` workflow on a standard GitHub runner (4 vCPU, stock Postgres 16 in Testcontainers). Both seed 1,000,000 demo events over 30 days (224k runs) and time each endpoint over HTTP: one warm-up, then 5 calls. On the development laptop the timings were unusable, because the machine was heavily throttled: a plain 10M-iteration Python loop took 4–5 s instead of about 0.6 s. The reference numbers therefore come from the runner, [perf run 45991346490](https://github.com/hrushi2311/LLM-Cost-Tracker/actions/runs/45991346490). Slowest of 5 calls:
+
+    | Endpoint | 14 days | 30 days |
+    |---|---|---|
+    | summary | 289 ms | 360 ms |
+    | timeseries (agent/day) | 286 ms | 432 ms |
+    | timeseries (model/hour) | 324 ms | – |
+    | agents | 259 ms | 274 ms |
+    | models | 136 ms | 196 ms |
+    | runs, first page | 14 ms | – |
+
+    Before the changes above, the first runner measurement had the summary at 593 ms (14 days) and at 1.47 s (30 days).
   - The spec's rollup table stays out of v0.1, as SPEC.md asks.
