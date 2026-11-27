@@ -40,6 +40,23 @@ class AnthropicAndResponsesParserTest {
     }
 
     @Test
+    void anthropicThinkingIsBilledInsideOutputTokensNotOnTop() throws IOException {
+        // Anthropic docs example: output_tokens 348, of which thinking_tokens 312. output_tokens is the inclusive
+        // billing total, so cost uses 348 output tokens; the 312 must not be added again.
+        Usage u = AnthropicMessagesUsageParser.parse(JSON.readTree(
+                "{\"usage\":{\"input_tokens\":10,\"output_tokens\":348,"
+                        + "\"output_tokens_details\":{\"thinking_tokens\":312}}}"));
+        dev.llmcosttracker.pricing.ModelPrice price = new dev.llmcosttracker.pricing.ModelPrice("anthropic", "m",
+                java.time.LocalDate.parse("2024-01-01"), new java.math.BigDecimal("4"), new java.math.BigDecimal("20"),
+                null, null);
+
+        // 10*4 + 348*20 = 40 + 6960 = 7000 -> 0.007 (adding thinking again would give 0.01324)
+        assertThat(dev.llmcosttracker.pricing.CostCalculator.cost(u, price))
+                .isEqualTo(new java.math.BigDecimal("0.00700000"));
+        assertThat(u.reasoningTokens()).isEqualTo(312);
+    }
+
+    @Test
     void anthropicErrorBodyGivesZeros() throws IOException {
         Usage u = AnthropicMessagesUsageParser.parse(JSON.readTree(
                 "{\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}"));

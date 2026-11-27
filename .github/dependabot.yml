@@ -8,6 +8,10 @@ updates:
       # SPEC.md pins Spring Boot 3; a move to 4.x is a deliberate decision, not a routine bump.
       - dependency-name: org.springframework.boot
         update-types: ["version-update:semver-major"]
+      # The provider SDKs used in tests (openai-java, anthropic-java) are built on OkHttp 4;
+      # MockWebServer/OkHttp 5 would clash with them (see docs/DECISIONS.md).
+      - dependency-name: com.squareup.okhttp3:*
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker
     directory: /
     schedule:
