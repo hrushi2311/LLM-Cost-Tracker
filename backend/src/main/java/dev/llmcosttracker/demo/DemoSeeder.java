@@ -52,7 +52,9 @@ public class DemoSeeder {
     /** Throws {@code DuplicateKeyException} if a project with that name exists. */
     public Result seed(String projectName, int events, int days, long randomSeed) {
         Result result = tx.execute(s -> write(projectName, events, days, randomSeed));
-        jdbc.execute("ANALYZE usage_event");
+        // Like a live table that autovacuum keeps up with: statistics, hint bits and the visibility map are set,
+        // so the first dashboard reads don't pay for them (and autovacuum doesn't start in the middle of them).
+        jdbc.execute("VACUUM (ANALYZE) usage_event");
         return result;
     }
 

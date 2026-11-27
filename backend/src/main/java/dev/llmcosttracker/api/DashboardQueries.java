@@ -91,7 +91,20 @@ public class DashboardQueries {
     public record Slice(UUID agentId, String provider, String model, boolean inRange, boolean inPrevious,
             boolean inMonth, boolean inDay, Stats stats) {}
 
+    /** SQL text and its arguments, so the performance check can EXPLAIN exactly what runs. */
+    public record Query(String sql, Object[] args) {}
+
     public List<Slice> slices(UUID projectId, Windows w, boolean byModel) {
+        Query q = slicesQuery(projectId, w, byModel);
+        return jdbc.query(q.sql(), (rs, i) -> new Slice(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3),
+                rs.getBoolean(4), rs.getBoolean(5), rs.getBoolean(6), rs.getBoolean(7),
+                new Stats(rs.getLong(8), rs.getBigDecimal(9), rs.getLong(10), rs.getLong(11), rs.getLong(12),
+                        rs.getLong(13), rs.getLong(14), rs.getLong(15), rs.getLong(16), rs.getLong(17),
+                        rs.getBigDecimal(18))),
+                q.args());
+    }
+
+    public Query slicesQuery(UUID projectId, Windows w, boolean byModel) {
         List<Object> args = new ArrayList<>();
         String inRange = "(created_at >= ? AND created_at < ?)";
         args.add(ts(w.range().from()));
@@ -129,12 +142,7 @@ public class DashboardQueries {
                   COALESCE(SUM(reasoning_tokens), 0), count(*) FILTER (WHERE status_code >= 400),
                   count(*) FILTER (WHERE incomplete), COALESCE(SUM(cost_usd) FILTER (WHERE run_id IS NOT NULL), 0)
                 FROM usage_event WHERE project_id = ? AND created_at >= ?""" + upper + " GROUP BY " + groupBy;
-        return jdbc.query(sql, (rs, i) -> new Slice(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3),
-                rs.getBoolean(4), rs.getBoolean(5), rs.getBoolean(6), rs.getBoolean(7),
-                new Stats(rs.getLong(8), rs.getBigDecimal(9), rs.getLong(10), rs.getLong(11), rs.getLong(12),
-                        rs.getLong(13), rs.getLong(14), rs.getLong(15), rs.getLong(16), rs.getLong(17),
-                        rs.getBigDecimal(18))),
-                args.toArray());
+        return new Query(sql, args.toArray());
     }
 
     /** Distinct run ids in the range (a hash aggregate over the run index, not a sort of every row). */

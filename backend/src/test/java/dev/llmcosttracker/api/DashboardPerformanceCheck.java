@@ -31,6 +31,9 @@ class DashboardPerformanceCheck extends ApiTestBase {
     @Autowired
     DemoSeeder seeder;
 
+    @Autowired
+    DashboardQueries queries;
+
     @Test
     void dashboardQueriesStayUnder500msWithOneMillionEvents() {
         long seedStart = System.nanoTime();
@@ -73,8 +76,27 @@ class DashboardPerformanceCheck extends ApiTestBase {
         }
         System.out.println("Dashboard API timings, " + String.format("%,d", seeded.events()) + " events:");
         report.forEach(System.out::println);
+        explain(seeded.projectId());
 
+        System.out.flush();
         assertThat(slowest).allSatisfy((name, ms) -> assertThat(ms).as(name).isLessThan(LIMIT_MS));
+    }
+
+    /** Prints the plans of the summary's two queries (default range, with budgets), for diagnosis. */
+    private void explain(java.util.UUID projectId) {
+        Instant now = clock.instant();
+        java.time.ZoneId zone = java.time.ZoneId.of("Asia/Kolkata");
+        TimeRange r = TimeRange.parse(null, null, now, zone);
+        DashboardQueries.Query q = queries.slicesQuery(projectId, new DashboardQueries.Windows(r, r.previous(),
+                dev.llmcosttracker.budget.BudgetPeriod.containing("month", now, zone).start(),
+                dev.llmcosttracker.budget.BudgetPeriod.containing("day", now, zone).start()), false);
+        System.out.println("EXPLAIN summary slices:");
+        jdbc.queryForList("EXPLAIN (ANALYZE, BUFFERS) " + q.sql(), String.class, q.args()).forEach(System.out::println);
+        System.out.println("EXPLAIN run count:");
+        jdbc.queryForList("EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM (SELECT run_id FROM usage_event "
+                        + "WHERE project_id = ? AND run_id IS NOT NULL AND created_at >= ? AND created_at < ? "
+                        + "GROUP BY run_id) runs", String.class, projectId, r.from().atOffset(java.time.ZoneOffset.UTC),
+                r.to().atOffset(java.time.ZoneOffset.UTC)).forEach(System.out::println);
     }
 
     private void call(String uri) {
